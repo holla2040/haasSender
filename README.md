@@ -5,6 +5,12 @@ pendant, so students learning on HAAS machines can practise the real workflow �
 modes, display panes, HANDLE JOG, CYCLE START, offsets, on-control editing —
 against a grblHAL machine, a USB GRBL board, or nothing at all.
 
+![haasSender running a program on the built-in simulator](images/screenshot.jpg)
+
+*Mid-cut in `OPERATION: MEM` — spindle at 2400 FWD, coolant on, and the block
+under the tool highlighted in both the program pane and the main display. No
+hardware attached; that is the built-in simulator.*
+
 Target hardware is the companion [grblhal-clearcore](../grblhal-clearcore) project
 (Teknic ClearCore, 4-axis XYZA). Reference for the control's layout is the 2014
 Mill Operator's Manual in `reference/`; the pendant photos are in `images/`.
