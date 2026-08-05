@@ -1,0 +1,402 @@
+/* HAAS pendant chrome.
+   Colours sampled from figure F2.26 of the 2014 Mill Operator's Manual rather than
+   guessed: the greys, the cyan, the RESET orange and the yellow accent are the
+   values that appear in the manual artwork. */
+
+:root {
+  /* palette, straight off the artwork */
+  --bezel:        #cccbcb;
+  --panel-black:  #231f20;
+  --cyan:         #0090c2;
+  --key-hi:       #e9e9e9;
+  --key-face:     #bdbcbc;
+  --key-mid:      #a7a5a6;
+  --key-lo:       #918f8f;
+  --key-edge:     #7b7979;
+  --reset-hi:     #f47216;
+  --reset-lo:     #d55415;
+  --reset-edge:   #61090b;
+  --yellow:       #ffd200;
+  --yellow-deep:  #f9af15;
+
+  /* the classic screen */
+  --screen-bg:    #0d3b1e;
+  --screen-pane:  #14522a;
+  --screen-text:  #e8f6e8;
+  --screen-dim:   #8fc79b;
+  --screen-key:   #ffe680;
+  --screen-active:#ffffff;
+  --screen-alarm: #c8102e;
+
+  /* one unit drives every dimension, so the pendant scales as a whole */
+  --u: clamp(7px, 0.95vw, 14px);
+
+  --key-r: calc(var(--u) * 0.55);
+  --font-key: "Arial Narrow", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-screen: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #21252a;
+  font-family: var(--font-key);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- the pendant */
+
+.pendant {
+  display: grid;
+  grid-template-columns: calc(var(--u) * 20) 1fr;
+  gap: calc(var(--u) * 1.5);
+  padding: calc(var(--u) * 1.6);
+  border-radius: calc(var(--u) * 0.6);
+  /* brushed stainless */
+  background:
+    repeating-linear-gradient(90deg,
+      rgba(255,255,255,.055) 0 1px, rgba(0,0,0,.05) 1px 2px, transparent 2px 4px),
+    linear-gradient(160deg, #d9dde0, #b8bec3 45%, #cdd2d6 70%, #aeb4b9);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.7),
+    inset 0 -2px 6px rgba(0,0,0,.28),
+    0 calc(var(--u) * 1.2) calc(var(--u) * 3) rgba(0,0,0,.55);
+}
+
+/* screws in the corners, as on the real panel */
+.pendant::before, .pendant::after {
+  content: ""; position: absolute; width: calc(var(--u) * .9); height: calc(var(--u) * .9);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #eceff1, #7d858c 60%, #5c6368);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
+}
+.pendant { position: relative; }
+.pendant::before { top: calc(var(--u) * .55); left: calc(var(--u) * .55); }
+.pendant::after  { top: calc(var(--u) * .55); right: calc(var(--u) * .55); }
+
+/* ------------------------------------------------------------- left-hand column */
+
+.column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 1.1);
+  padding-top: calc(var(--u) * 1.4);
+}
+
+.logo {
+  width: calc(var(--u) * 9); height: calc(var(--u) * 9);
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 38% 30%, #f2f4f5, #9aa1a7 55%, #6e757b);
+  box-shadow: inset 0 0 0 calc(var(--u)*.22) #babfc4, 0 2px 5px rgba(0,0,0,.45);
+}
+.logo svg { width: 78%; height: 78%; }
+
+.legend {
+  font-size: calc(var(--u) * .82);
+  letter-spacing: .06em;
+  color: #23282c;
+  text-align: center;
+  font-weight: 700;
+}
+
+.pair { display: flex; gap: calc(var(--u) * 2.2); }
+.pair > div { display: flex; flex-direction: column; align-items: center; gap: calc(var(--u)*.4); }
+
+/* round illuminated pushbuttons */
+.pb {
+  width: calc(var(--u) * 3.4); height: calc(var(--u) * 3.4);
+  border-radius: 50%; border: none; cursor: pointer;
+  box-shadow: inset 0 calc(var(--u)*.18) 0 rgba(255,255,255,.55),
+              inset 0 calc(var(--u)*-.25) calc(var(--u)*.3) rgba(0,0,0,.4),
+              0 calc(var(--u)*.2) calc(var(--u)*.4) rgba(0,0,0,.45);
+}
+.pb:active { transform: translateY(1px); filter: brightness(1.25); }
+.pb.green { background: radial-gradient(circle at 38% 32%, #7ee89a, #1f9c46 60%, #12703200); background-color: #1f9c46; }
+.pb.red   { background: radial-gradient(circle at 38% 32%, #ff9a90, #c0281c 60%, #8b160e00); background-color: #c0281c; }
+
+/* emergency stop */
+.estop {
+  width: calc(var(--u) * 8); height: calc(var(--u) * 8);
+  border-radius: 50%; border: none; cursor: pointer; position: relative;
+  background: radial-gradient(circle at 50% 45%, #ffe14d, #f2c200 62%, #c99e00);
+  box-shadow: 0 calc(var(--u)*.3) calc(var(--u)*.6) rgba(0,0,0,.5);
+  display: grid; place-items: center;
+}
+.estop i {
+  display: block; width: 66%; height: 66%; border-radius: 50%;
+  background: radial-gradient(circle at 42% 34%, #ff6a5a, #c8102e 62%, #8c0a1f);
+  box-shadow: inset 0 calc(var(--u)*-.3) calc(var(--u)*.4) rgba(0,0,0,.45),
+              inset 0 calc(var(--u)*.2) 0 rgba(255,255,255,.3);
+}
+.estop:active i { filter: brightness(.85); }
+
+/* handle-jog dial */
+.dial {
+  width: calc(var(--u) * 9.5); height: calc(var(--u) * 9.5);
+  border-radius: 50%; position: relative; cursor: grab;
+  background: conic-gradient(from 0deg, #d7dbde, #aeb4b9 12%, #d7dbde 25%, #aeb4b9 37%,
+              #d7dbde 50%, #aeb4b9 62%, #d7dbde 75%, #aeb4b9 87%, #d7dbde);
+  box-shadow: inset 0 0 0 calc(var(--u)*.35) #9aa1a7, 0 calc(var(--u)*.25) calc(var(--u)*.5) rgba(0,0,0,.45);
+  display: grid; place-items: center;
+}
+.dial:active { cursor: grabbing; }
+/* graduated ring, as on the real handle */
+.dial::before {
+  content: ""; position: absolute; inset: calc(var(--u) * .55); border-radius: 50%;
+  background: repeating-conic-gradient(#5c6368 0 1.2deg, transparent 1.2deg 9deg);
+  -webkit-mask: radial-gradient(circle, transparent 62%, #000 63%);
+  mask: radial-gradient(circle, transparent 62%, #000 63%);
+  opacity: .75;
+}
+.dial i {
+  width: 52%; height: 52%; border-radius: 50%;
+  background: radial-gradient(circle at 38% 30%, #f2f4f5, #9aa1a7 62%, #767d83);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+  display: grid; place-items: center;
+}
+.dial i::after {   /* the knurl mark, so rotation is legible */
+  content: ""; width: calc(var(--u)*.5); height: calc(var(--u)*.5); border-radius: 50%;
+  background: #5c6368; transform: translateY(calc(var(--u) * -1.7));
+}
+
+/* ------------------------------------------------------------------ right side */
+
+.stack { display: flex; flex-direction: column; gap: calc(var(--u) * 1.2); min-width: 0; }
+
+/* ---------------------------------------------------------------- the keyboard */
+
+.keyboard {
+  background: var(--bezel);
+  border-radius: calc(var(--u) * .5);
+  padding: calc(var(--u) * .8);
+  box-shadow: inset 0 0 0 1px #b4b3b3, inset 0 1px 0 rgba(255,255,255,.8);
+  display: grid;
+  grid-template-columns: auto auto auto;
+  grid-template-areas:
+    "function display mode"
+    "jog      cursor  mode"
+    "overrides alpha  numeric";
+  gap: calc(var(--u) * .7);
+  align-items: start;
+}
+.grp-function  { grid-area: function; }
+.grp-jog       { grid-area: jog; }
+.grp-overrides { grid-area: overrides; }
+.grp-display   { grid-area: display; }
+.grp-cursor    { grid-area: cursor; }
+.grp-mode      { grid-area: mode; }
+.grp-alpha     { grid-area: alpha; }
+.grp-numeric   { grid-area: numeric; }
+
+.group {
+  display: grid;
+  gap: calc(var(--u) * .32);
+  padding: calc(var(--u) * .42);
+  border-radius: calc(var(--u) * .45);
+  background: #c4c3c3;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.14);
+}
+.group.panel-black { background: var(--panel-black); }
+.group.panel-cyan  { background: var(--cyan); }
+
+.group h2 {
+  grid-column: 1 / -1;
+  margin: 0 0 calc(var(--u) * .1);
+  font-size: calc(var(--u) * 1.15);
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-align: center;
+  color: #fff;
+}
+
+/* a plain text label sitting in the grid, e.g. SPINDLE and CURSOR */
+.group .label {
+  display: grid; place-items: center;
+  font-size: calc(var(--u) * .82); font-weight: 700; letter-spacing: .06em;
+}
+.group.panel-black .label { color: #fff; }
+.group.panel-cyan .label  { color: #fff; font-size: calc(var(--u) * 1.05); letter-spacing: .1em; }
+
+/* ---------------------------------------------------------------------- a key */
+
+.key {
+  position: relative;
+  min-width: calc(var(--u) * 4.6);
+  min-height: calc(var(--u) * 3.1);
+  padding: calc(var(--u) * .2) calc(var(--u) * .25);
+  border: none;
+  border-radius: var(--key-r);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(var(--u) * .78);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: .01em;
+  color: #17191b;
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, var(--key-hi) 0%, var(--key-face) 42%, var(--key-mid) 72%, var(--key-lo) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.55),
+    0 0 0 1px var(--key-edge),
+    0 calc(var(--u) * .16) 0 #6f6d6d,
+    0 calc(var(--u) * .3) calc(var(--u) * .35) rgba(0,0,0,.4);
+}
+.key:active, .key.down {
+  transform: translateY(calc(var(--u) * .14));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.4), 0 0 0 1px var(--key-edge),
+              0 calc(var(--u) * .04) calc(var(--u) * .18) rgba(0,0,0,.45);
+  filter: brightness(.96);
+}
+.key:focus-visible { outline: calc(var(--u)*.22) solid #2f9bff; outline-offset: 2px; }
+
+.key.big { font-size: calc(var(--u) * 1.5); }
+.key .glyph { font-size: calc(var(--u) * 1.35); line-height: 1; }
+
+/* the shifted character printed in yellow above the legend */
+.key .sup {
+  position: absolute; top: calc(var(--u) * .18); left: calc(var(--u) * .38);
+  font-size: calc(var(--u) * .8); color: var(--yellow-deep);
+  text-shadow: 0 1px 0 rgba(0,0,0,.25);
+}
+
+.key.cyan {
+  background: linear-gradient(180deg, #9adcf2 0%, #56c0e4 40%, #29a8d6 74%, #0f8ec0 100%);
+}
+.key.reset {
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.55);
+  font-size: calc(var(--u) * 1.5);
+  letter-spacing: .1em;
+  background: linear-gradient(180deg, #ffb35c 0%, var(--reset-hi) 38%, var(--reset-lo) 72%, #a8300f 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.5), 0 0 0 calc(var(--u)*.22) var(--reset-edge),
+              0 calc(var(--u) * .16) 0 #4d0607, 0 calc(var(--u) * .3) calc(var(--u) * .35) rgba(0,0,0,.45);
+}
+.key.shift { color: var(--yellow-deep); }
+
+/* Mode keys carry a notched left edge on the real panel, which is how an operator
+   picks them out of the block at a glance — see F2.26. */
+.key.mode {
+  clip-path: polygon(0 26%, 13% 0, 100% 0, 100% 100%, 13% 100%, 0 74%);
+  border-radius: 0 var(--key-r) var(--key-r) 0;
+  padding-left: calc(var(--u) * .75);
+}
+
+/* X jog keys print the arrow beside the legend, not above it */
+.key.inline { flex-direction: row; gap: calc(var(--u) * .25); }
+
+/* the yellow wedge on the rotary-axis keys */
+.key .corner {
+  position: absolute; width: calc(var(--u) * 1.5); height: calc(var(--u) * 1.5);
+  background: var(--yellow);
+}
+.key .corner.tl { top: 0; left: 0; clip-path: polygon(0 0, 100% 0, 0 100%); border-top-left-radius: var(--key-r); }
+.key .corner.br { bottom: 0; right: 0; clip-path: polygon(100% 100%, 100% 0, 0 100%); border-bottom-right-radius: var(--key-r); }
+.key .lines {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center;
+}
+
+/* the divider the MDI/DNC key carries between its two legends */
+.key.rule .lines > span:first-child { border-bottom: 1px solid #17191b; padding-bottom: 1px; }
+
+/* --------------------------------------------------------------- the screen */
+
+.screen {
+  /* Height is set in units rather than by aspect ratio: the screen's width comes
+     from the keyboard below it, and letting a 4:3 ratio drive the height made the
+     display tower over the keypad, which is backwards from the real pendant. */
+  height: calc(var(--u) * 40);
+  background: #05140a;
+  border-radius: calc(var(--u) * .4);
+  padding: calc(var(--u) * .9);
+  box-shadow: inset 0 0 0 calc(var(--u)*.5) #1b1e21, inset 0 0 calc(var(--u)*2.5) rgba(0,0,0,.85),
+              0 calc(var(--u)*.3) calc(var(--u)*.8) rgba(0,0,0,.5);
+  font-family: var(--font-screen);
+  font-size: calc(var(--u) * .95);
+  color: var(--screen-text);
+  display: grid;
+  gap: calc(var(--u) * .35);
+  grid-template-columns: 1.15fr 1fr .8fr .55fr;
+  grid-template-rows: auto auto 1fr auto auto auto;
+  grid-template-areas:
+    "modebar modebar modebar modebar"
+    "program codes   tool    coolant"
+    "program main    main    main"
+    "spindle position position timers"
+    "status  status  status  alarm"
+    "icons   input   input   input";
+}
+
+.pane {
+  background: var(--screen-pane);
+  border-radius: calc(var(--u) * .2);
+  padding: calc(var(--u) * .3) calc(var(--u) * .45);
+  overflow: hidden;
+  min-width: 0;
+  display: flex; flex-direction: column;
+}
+.pane > h3 {
+  margin: calc(var(--u) * -.3) calc(var(--u) * -.45) calc(var(--u) * .3);
+  padding: calc(var(--u) * .16) calc(var(--u) * .45);
+  background: #06210f;
+  color: var(--screen-dim);
+  font: inherit; font-size: calc(var(--u) * .85);
+  letter-spacing: .08em;
+}
+.pane pre { margin: 0; font: inherit; white-space: pre; overflow: hidden; }
+
+/* "The currently active pane has a white background. You can work with data in a
+   pane only when that pane is active." — 2014 manual, 2.3.4 */
+.pane.active { background: #f2f5f2; color: #10160f; }
+.pane.active > h3 { background: #d5dbd5; color: #223226; }
+
+.pane-modebar  { grid-area: modebar; }
+.pane-program  { grid-area: program; }
+.pane-codes    { grid-area: codes; }
+.pane-tool     { grid-area: tool; }
+.pane-coolant  { grid-area: coolant; }
+.pane-main     { grid-area: main; }
+.pane-spindle  { grid-area: spindle; }
+.pane-position { grid-area: position; }
+.pane-timers   { grid-area: timers; }
+.pane-status   { grid-area: status; }
+.pane-alarm    { grid-area: alarm; }
+.pane-icons    { grid-area: icons; }
+.pane-input    { grid-area: input; }
+
+/* mode bar: mode on the left, active display function on the right */
+.modebar {
+  grid-area: modebar;
+  display: flex; justify-content: space-between; align-items: center;
+  background: linear-gradient(180deg, #3aa0d8, var(--cyan));
+  color: #fff; font-weight: 700; letter-spacing: .12em;
+  padding: calc(var(--u) * .22) calc(var(--u) * .6);
+  border-radius: calc(var(--u) * .9);
+}
+
+.pane-alarm { background: #3a0d13; color: #ffd7dc; }
+.pane-alarm.on { background: var(--screen-alarm); color: #fff; }
+
+.dro { display: grid; grid-template-columns: auto repeat(4, 1fr); gap: 0 calc(var(--u)*.6); }
+/* The position readouts are the largest text on a HAAS screen — an operator reads
+   them from a pace away, through the window. */
+.dro.big { font-size: calc(var(--u) * 1.7); line-height: 1.5; }
+.dro.big b { font-size: calc(var(--u) * .95); align-self: center; }
+.dro b { color: var(--screen-dim); font-weight: 400; }
+.dro span { text-align: right; font-variant-numeric: tabular-nums; }
+.pane.active .dro b { color: #4d6b54; }
+
+.k { color: var(--screen-key); }
+.dim { color: var(--screen-dim); }
+.pane.active .dim { color: #4d6b54; }
+.pane.active .k { color: #7a5c00; }
+
+/* the running block, highlighted from Ln: in the status report */
+.cur { background: var(--screen-key); color: #10160f; }

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+
+# Haas Automation's operator manuals are copyright Haas Automation, Inc.
+# They are the reference this project is built against, but redistributing them
+# here would be infringement — fetch your own copy (see README) and drop it in.
+reference/*.pdf
+reference/art/
+history/tool-results/*.pdf
+history/tool-results/pdf-*/

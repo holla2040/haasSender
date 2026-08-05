@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>haasSender</title>
+<link rel="stylesheet" href="./src/haas.css">
+<script type="importmap">
+{ "imports": { "lit-html": "/node_modules/lit-html/lit-html.js" } }
+</script>
+<style>
+  /* The setup strip is deliberately not part of the pendant — a real HAAS has no
+     "which machine am I talking to" control, so it stays visually outside. */
+  .setup {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; gap: .5rem; align-items: center;
+    padding: .3rem .6rem; background: #16191d; color: #9fb3a6;
+    font: 12px/1.4 ui-monospace, monospace;
+  }
+  .setup select, .setup input, .setup button {
+    font: inherit; background: #21262b; color: #d6e4da;
+    border: 1px solid #39424a; padding: .15rem .4rem;
+  }
+  .setup button { cursor: pointer; }
+  .setup .spacer { flex: 1; }
+  .setup .ok { color: #7fd39b; }
+  .setup .bad { color: #e06c75; }
+  body { padding-top: 2rem; }
+</style>
+
+<div class="setup">
+  <select id="kind">
+    <option value="sim">Simulator</option>
+    <option value="websocket">WebSocket</option>
+    <option value="serial">USB serial</option>
+  </select>
+  <input id="host" value="192.168.0.113" size="13">
+  <button id="connect">Connect</button>
+  <span id="link">not connected</span>
+  <span class="spacer"></span>
+  <label><input type="file" id="file" accept=".nc,.gcode,.tap,.txt" style="width:15rem"></label>
+</div>
+
+<main id="app"></main>
+
+<script type="module" src="./src/main.js"></script>

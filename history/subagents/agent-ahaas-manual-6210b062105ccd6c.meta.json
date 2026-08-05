@@ -1,0 +1,1 @@
+{"agentType":"haas-manual","description":"Find HAAS operator manual graphics","name":"haas-manual","spawnDepth":0,"model":"opus[1m]","taskKind":"in_process_teammate","teamName":"session-9406b8dc","color":"yellow","planModeRequired":true,"permissionMode":"plan"}

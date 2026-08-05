@@ -1,0 +1,18 @@
+{
+  "name": "haassender",
+  "version": "0.1.0",
+  "description": "A HAAS-lookalike g-code sender for grblHAL",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test 'test/*.test.js'",
+    "build": "node build.js",
+    "dev": "python3 -m http.server 8000"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "lit-html": "^3.2.0"
+  }
+}
