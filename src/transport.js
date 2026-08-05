@@ -28,6 +28,20 @@ class LineSplitter {
   }
 }
 
+/**
+ * If this page was served from a board, that board is the one to talk to.
+ *
+ * Returns the hostname to connect back to, or null when we are running from a dev
+ * server or the filesystem and the operator has to supply the address. Never bake
+ * a specific IP in: a DHCP lease changes and a second board has its own.
+ */
+export function servedFromBoard (loc = globalThis.location) {
+  const host = loc?.hostname
+  if (!host) return null                                   // file://
+  if (['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'].includes(host)) return null
+  return host
+}
+
 // Real-time commands are single bytes, many of them above 0x7F (0x90 feed 100%,
 // 0xA0 flood toggle...). They must reach the controller as raw bytes — running
 // them through a UTF-8 encoder turns 0x90 into two bytes and the controller either
@@ -71,8 +85,16 @@ export function websocketTransport ({ host, port = 81 }) {
       })
     },
 
-    send (str) { ws?.send(new TextEncoder().encode(str)) },
-    sendRealtime (byte) { ws?.send(rawByte(byte)) },
+    // Guard on OPEN, not just on ws being set. `link` is assigned before the
+    // handshake finishes, so the 200 ms status poller can fire into a CONNECTING
+    // socket — and send() throws InvalidStateError unless the socket is open.
+    // The same guard covers sends racing a close.
+    send (str) {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(str))
+    },
+    sendRealtime (byte) {
+      if (ws?.readyState === WebSocket.OPEN) ws.send(rawByte(byte))
+    },
     onLine (cb) { onLineCb = cb },
     disconnect () { ws?.close(); ws = null }
   }

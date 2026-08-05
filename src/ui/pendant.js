@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit-html'
-import { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, NUMERIC } from '../keys.js'
+import { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, NUMERIC, VERIFIED } from '../keys.js'
 
 // The pendant: brushed panel, left-hand controls, screen and keyboard.
 // Layout and key legends follow figure F2.26 of the 2014 Mill Operator's Manual.
@@ -14,10 +14,11 @@ function keyTpl (key, press) {
   return html`
     <button
       class=${cls('key', key.variant, key.big && 'big', key.shift && 'shift',
-                  key.rule && 'rule', key.inline && 'inline')}
+                  key.rule && 'rule', key.inline && 'inline',
+                  VERIFIED.has(key.id) && 'done')}
       style=${style}
       data-key=${key.id}
-      title=${key.lines.join(' ')}
+      title=${VERIFIED.has(key.id) ? key.lines.join(' ') : key.lines.join(' ') + ' — not implemented yet'}
       @pointerdown=${(e) => { e.preventDefault(); press(key.id) }}>
       ${key.corner ? html`<i class="corner ${key.corner}"></i>` : nothing}
       ${key.sup ? html`<span class="sup">${key.sup}</span>` : nothing}
@@ -78,11 +79,11 @@ export const pendant = (state, actions) => {
 
         <div class="pair">
           <div>
-            <button class="pb green" @click=${() => press('cycle-start')} aria-label="Cycle start"></button>
+            <button class="pb green done" @click=${() => press('cycle-start')} aria-label="Cycle start"></button>
             <span class="legend">CYCLE<br>START</span>
           </div>
           <div>
-            <button class="pb red" @click=${() => press('feed-hold')} aria-label="Feed hold"></button>
+            <button class="pb red done" @click=${() => press('feed-hold')} aria-label="Feed hold"></button>
             <span class="legend">FEED<br>HOLD</span>
           </div>
         </div>

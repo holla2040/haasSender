@@ -24,13 +24,28 @@ Offsets, current commands, alarms and on-control editing are phases 4-5.
 
 ```
 npm install
-npm test          # 21 tests, no hardware needed
+npm test          # 24 tests, no hardware needed
 npm run dev       # http://localhost:8000
 npm run build     # dist/index.html.gz for the board's SD card
 ```
 
 `npm run dev` serves on localhost, which is a secure context — so Web Serial works
-in development without HTTPS.
+in development without HTTPS. It uses esbuild's server rather than a plain static
+one because that one sends no cache validators, so an ordinary reload picks up an
+edited module instead of quietly serving the cached copy.
+
+### Pointing it at a machine
+
+The board address is never hardcoded — a fixed IP goes stale on the next DHCP
+lease. It is resolved in this order:
+
+1. `?board=<addr>` in the URL — `http://localhost:8000/?board=192.168.0.113`.
+   Bookmark one per machine in a classroom.
+2. The host that served the page, when installed on a board's SD card.
+3. The last address that connected successfully, remembered in `localStorage`.
+
+So local development against a bench board means passing `?board=` once; after
+that the plain URL remembers it.
 
 ## Transports
 

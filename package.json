@@ -7,7 +7,7 @@
   "scripts": {
     "test": "node --test 'test/*.test.js'",
     "build": "node build.js",
-    "dev": "python3 -m http.server 8000"
+    "dev": "esbuild --servedir=. --serve=8000"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

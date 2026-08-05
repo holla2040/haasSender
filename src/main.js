@@ -1,5 +1,5 @@
 import { render } from 'lit-html'
-import { websocketTransport, serialTransport, simTransport } from './transport.js'
+import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen } from './ui/screen.js'
@@ -255,6 +255,7 @@ async function connect () {
     $('link').textContent = link.describe()
     $('link').className = 'ok'
     s.link = link.kind.toUpperCase()
+    if (kind === 'websocket' && $('host').value) remember.set($('host').value)
     link.send('$I\n')
     link.send('$G\n')
     link.send('$#\n')
@@ -262,6 +263,9 @@ async function connect () {
     $('link').textContent = e.message
     $('link').className = 'bad'
     link = null
+    // Say it on the control, not just in the dev strip. An operator watching the
+    // screen must be able to tell "not connected" from "connected and at zero".
+    s.message = `cannot reach ${$('host').value || 'the machine'} — ${e.message}`
   }
   invalidate()
 }
@@ -269,6 +273,39 @@ async function connect () {
 setInterval(() => {
   if (link && performance.now() - lastReportAt > STATUS_IDLE_MS) link.sendRealtime(0x3F)
 }, 200)
+
+// Where is the machine? In precedence order:
+//   1. an explicit ?board=<addr> — bookmark one per machine in a classroom
+//   2. the host that served this page — we are installed on a board's SD card,
+//      and a network socket is the only transport there anyway, since plain HTTP
+//      is not a secure context and Web Serial does not exist
+//   3. the last address that connected successfully — so local development
+//      against a bench board does not mean retyping it every reload
+// Never a hardcoded default: a fixed IP goes stale on the next DHCP lease and
+// has no business in a published repository.
+// localStorage throws rather than returning null when storage is blocked — some
+// embedded and file:// contexts do that. At module scope an uncaught throw here
+// means a blank page instead of a control, so it is never worth the risk.
+const REMEMBERED = 'haassender.board'
+const remember = {
+  get: () => { try { return localStorage.getItem(REMEMBERED) } catch { return null } },
+  set: (v) => { try { localStorage.setItem(REMEMBERED, v) } catch { /* not fatal */ } }
+}
+
+const wantedBoard =
+  new URLSearchParams(location.search).get('board') ||
+  servedFromBoard() ||
+  remember.get() ||
+  ''
+
+if (wantedBoard) {
+  $('host').value = wantedBoard
+  $('kind').value = 'websocket'
+  // Knowing which machine this is and not connecting to it is the worst of both:
+  // the pendant looks live while the readouts sit at zero, which is precisely the
+  // lie a trainer must not tell. If we know where the machine is, go there.
+  connect()
+}
 
 $('connect').onclick = connect
 $('file').onchange = async (e) => {

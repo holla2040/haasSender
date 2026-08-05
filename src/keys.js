@@ -165,6 +165,36 @@ export const NUMERIC = {
 
 export const GROUPS = { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, NUMERIC }
 
+/**
+ * Keys that actually work, drawn with a green tint so it is obvious at a glance
+ * what is real and what is still just a legend on a button.
+ *
+ * The bar for being on this list is deliberately high: the key's action must be
+ * wired AND exercised by a passing test or observed working end to end. Several
+ * keys are wired but not listed, because "wired" is not the same as "works" —
+ * the OFFSET display key switches panes but the pane is a placeholder; EDIT and
+ * MDI change the mode bar and nothing else; the rapid and spindle override keys
+ * send the right byte but nothing has confirmed the machine acts on it.
+ *
+ * Add to this list as each phase lands, not when the handler is first written.
+ */
+export const VERIFIED = new Set([
+  // display pages with real content behind them
+  'page-position', 'page-program',
+  // modes whose behaviour exists: jogging and running a program
+  'mode-jog', 'mode-memory',
+  // handle-jog increments — observed changing the step and the resulting move
+  'inc-0001', 'inc-001', 'inc-01', 'inc-1',
+  // linear jog, $J= confirmed against both the simulator and the real board
+  'jog-x-plus', 'jog-x-minus', 'jog-y-plus', 'jog-y-minus', 'jog-z-plus', 'jog-z-minus',
+  // feed override bytes 0x90/0x91/0x92, covered by the simulator override test
+  'feed-minus', 'feed-100', 'feed-plus',
+  // M3/M4/M5, covered by the deferred M-code test and seen driving the spindle pane
+  'spindle-cw', 'spindle-stop', 'spindle-ccw',
+  // soft reset 0x18
+  'reset'
+])
+
 // ---------------------------------------------------------------- mode mapping
 
 /**
