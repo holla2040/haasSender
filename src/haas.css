@@ -379,9 +379,24 @@ body {
    The pane height is unchanged — this spends slack that was already there, plus
    the axis-letter row, which becomes a small label rather than a line of its own.
    Scoped to this pane on purpose: the big DRO on the POSITION page is untouched. */
-.pane-position .dro { align-content: center; height: 100%; row-gap: 0; }
-.pane-position .dro span { font-size: calc(var(--u) * 2.1); line-height: 1.1; }
-.pane-position .dro > span:nth-child(-n+5) {   /* the X Y Z A header row */
+.pane-position { padding-left: 0; padding-right: 0; }
+.pane-position h3 { padding-left: calc(var(--u) * .45); }
+.pane-position .dro.wide {
+  /* Every pixel inside the pane goes to the numbers: no label column, no side
+     padding, no column gaps. The pane's own width is unchanged. */
+  grid-template-columns: repeat(4, 1fr);
+  column-gap: 0;
+  align-content: center; height: 100%; row-gap: 0;
+}
+/* 2.8u = 39.2px, which is the largest that still fits EIGHT characters in the
+   192px cell — "-200.000", which this machine can genuinely show, its travel
+   being 200mm. 50% larger (44px) would fit only seven, so a move to the end of
+   the table would clip. Sized for the worst value that can appear, not the ones
+   on screen while someone is looking. */
+.pane-position .dro span { font-size: calc(var(--u) * 2.8); line-height: 1.05; }
+/* Four headers, not five: the label column is gone, so -n+5 was catching the
+   first value and rendering X at full size and the X reading at label size. */
+.pane-position .dro > span:nth-child(-n+4) {   /* the X Y Z A header row */
   font-size: calc(var(--u) * .72);
   line-height: 1;
   text-align: center;      /* a column header, not a right-aligned number */

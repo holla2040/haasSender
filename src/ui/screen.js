@@ -463,10 +463,15 @@ const lit = (s) => html`
       <pre><span class="dim">RPM</span> ${s.stale ? '—' : Math.round(s.spindle)}
 <span class="dim">DIR</span> ${s.stale || !s.spindleDir ? '—' : s.spindleDir > 0 ? 'FWD' : 'REV'}</pre>`, false)}
 
-    ${pane('position', 'POSITION', html`
-      <div class="dro">
-        <b></b>${AXES.map(a => html`<span class="dim">${a}</span>`)}
-        ${droRow('WORK', s.mpos.map((v, i) => v - s.wco[i]), s)}
+    ${/* Its own markup rather than droRow(): no label column, so all four values
+          get the full width of the pane. Which system it is moves into the title,
+          where it costs nothing. */''}
+    ${pane('position', 'POSITION ' + s.wcs, html`
+      <div class="dro wide">
+        ${AXES.map(a => html`<span class="dim">${a}</span>`)}
+        ${s.mpos.map((v, i) => html`<span>${fmt(
+          (v - s.wco[i]) * displayScale(s.reportUnits, s.units),
+          s.units === 'IN', s.stale)}</span>`)}
       </div>`, false)}
 
     ${pane('timers', 'TIMERS', html`

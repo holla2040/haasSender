@@ -260,8 +260,16 @@ The fiddliest behaviour in the project. Budget accordingly.
       carrying 30px of unused space. The values are 29.4px now — 2.4× — at the same
       pane height, paid for out of that slack plus the axis-letter row, which
       became a small centred label rather than a line of its own. Sized so the
-      widest value that can appear still fits: `-1000.0000` in inch mode needs
-      185px against a 178px cell at 2.2u, so it is 2.1u.
+      widest value that can appear still fits.
+      **39.2px, 3.2× the original**, with the pane's own width and height both
+      unchanged: the room came from inside it — the WORK label column (which moved
+      into the pane title as `POSITION G54`), the side padding and the column gaps,
+      giving 192px a cell instead of 178.
+      **Sized for eight characters, not for what is on screen.** `-200.000` is
+      189px of the 192 available, and this machine's travel is 200mm so it can
+      genuinely show that. 50% larger again — 44px — fits only seven characters,
+      so a move to the end of the table would clip. The measured ceilings are
+      45.5px for 7 characters, 39.75px for 8, 35.25px for 9.
       The big DRO on the POSITION page is untouched, as asked — except that it was
       **clipping DIST TO GO by 23px**, a regression from the 1080p height cut that
       the first overflow check missed. Fixed by leading alone (1.5 → 1.22); the
