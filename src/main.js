@@ -246,7 +246,6 @@ function press (id) {
     case 'zero-all':
       s.message = 'homing — untested on this machine, no limit switches fitted'
       return send('$H')
-    case 'zero-home': return send('G28')
     case 'zero-single':
       // A HAAS homes one axis at a time here, and asks which. grblHAL takes the
       // axis letter after `$H`.

@@ -238,6 +238,12 @@ export const VERIFIED = new Set([
   'inc-0001', 'inc-001', 'inc-01', 'inc-1',
   // linear jog, $J= confirmed against both the simulator and the real board
   'jog-x-plus', 'jog-x-minus', 'jog-y-plus', 'jog-y-minus', 'jog-z-plus', 'jog-z-minus',
+  // the rotary pair drives the fourth axis, and the board has one: `[AXS:4:XYZA]`.
+  // Watched A go 5.000 → 25.000 → 15.000 on the real machine.
+  'jog-b-plus', 'jog-a-plus',
+  // ZERO RETURN as a mode — the bar reads SETUP: ZERO. The keys inside it are a
+  // different question and stay unverified; homing has no switches to test with.
+  'mode-zero-return',
   // every override byte, each watched moving `Ov:` on the real board
   'feed-minus', 'feed-100', 'feed-plus',
   'spindle-minus', 'spindle-100', 'spindle-plus',
@@ -289,9 +295,14 @@ export const VERIFIED = new Set([
  * command at all, or the machine has no such hardware. Telling a student "not
  * done yet" about a key that is never coming is its own small lie.
  *
- * Kept deliberately short. Orienting the spindle, POWER UP RESTART and the
- * RS-232 SEND/RECEIVE keys are NOT here: they are unimplemented, not impossible,
- * and claiming otherwise would overstate what we know.
+ * Kept deliberately short. POWER UP RESTART and the RS-232 SEND/RECEIVE keys are
+ * NOT here: they are unimplemented, not impossible, and claiming otherwise would
+ * overstate what we know.
+ *
+ * This table is static, but two of its entries — `G28` and `M19` — are facts
+ * about *this firmware build*, not about grbl. A different grblHAL machine may
+ * well accept both. Re-check them before trusting this file on other hardware:
+ * send the command and read the reply, which is how they got here.
  */
 export const UNAVAILABLE = new Map([
   // grbl's rapid override is a three-position switch: 0x95/0x96/0x97. There is no
@@ -314,7 +325,14 @@ export const UNAVAILABLE = new Map([
   // spigot does not.
   ['coolant-up', 'no programmable coolant fitted to this machine'],
   ['coolant-down', 'no programmable coolant fitted to this machine'],
-  ['aux-coolant', 'no programmable coolant fitted to this machine']
+  ['aux-coolant', 'no programmable coolant fitted to this machine'],
+
+  // Both measured on the ClearCore rather than assumed, and both came back
+  // `error:20` — the parser does not know either command. HOME G28 was worse than
+  // unbuilt before that was checked: it was wired to a command the board rejects,
+  // so the key looked live and produced an error every time.
+  ['zero-home', 'G28 is not supported by this board — it answers error:20'],
+  ['orient-spindle', 'M19 spindle orient is not supported by this board — it answers error:20']
 ])
 
 // ---------------------------------------------------------------- mode mapping

@@ -28,8 +28,12 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 ## Where it stands
 
 All six phases are done except one item that needs a person at the bench. Of 132
-keys: **103 work**, **12 can never work** on this control, **17 are not built
+keys: **106 work**, **14 can never work** on this control, **12 are not built
 yet**. All thirteen display pages are real.
+
+The twelve unbuilt: POWER UP RESTART, F1-F4, JOG LOCK, the two HANDLE CONTROL
+keys, ZERO RETURN's ALL and SINGLE (homing, untestable without limit switches),
+and RS-232 SEND / RECEIVE.
 
 **The one thing left is Web Serial**, which has never seen a USB board and cannot
 be tested without someone plugging one in — see phase 6. It is deferred, not
@@ -201,11 +205,16 @@ The phase with real design in it. Do this before phase 5.
       rather than silently written as zero.
 - [x] Active Codes pane from `$G`, Active Tool (the `T` word out of the same modal
       string — the only place this control can learn it) and Coolant panes.
-- [x] `[ZERO RETURN]` group wired: `ALL` → `$H`, `HOME G28` → `G28`, `SINGLE` asks
-      which axis then sends `$H<axis>`, `ORIGIN` zeroes the OPERATOR readout.
-      **The homing keys are NOT in `VERIFIED`** and say so when pressed — this board
+- [x] `[ZERO RETURN]` group: `ALL` → `$H`, `SINGLE` asks which axis then sends
+      `$H<axis>`, `ORIGIN` zeroes the OPERATOR readout. The mode key itself is
+      verified — the bar reads `SETUP: ZERO`.
+      **The homing keys are NOT in `VERIFIED`** and say so when pressed: this board
       has no limit switches, so `$H` is the one mapping in the project that cannot
-      be confirmed. `ORIGIN` is verified; it needs no machine.
+      be confirmed.
+      **`HOME G28` turned out to be worse than unbuilt.** It was wired to `G28`,
+      which this board answers with `error:20` — the key looked live and produced
+      an error every time. Measured, not assumed; it is now marked impossible with
+      that reason, alongside `ORIENT SPINDLE`, whose `M19` errors the same way.
 - [x] DIST TO GO — computed from the running block, and **null when the block does
       not say**: no axis words, or `G91`, where the target depends on where the move
       began. Dashes rather than a plausible zero.
@@ -371,6 +380,11 @@ Things that cost real time to discover. Do not re-derive them.
   from the top with the tool in the cut, and after RESET it sent a resume byte to
   a machine with nothing queued instead of starting the job, because the streamer
   still held the old line list. RESET now clears the streamer rather than pausing it.
+- **This board does not support `G28`, `G28.1` or `M19`** — all three answer
+  `error:20`, measured over telnet and again through the control. Worth knowing
+  because `$#` *does* report a `[G28:…]` parameter, so the position exists while
+  the command to go to it does not; the parameter's presence is not evidence the
+  command works. The lesson generalises: check the command, not the report.
 - **`$13` and G20/G21 are different questions.** `$13` says what unit `MPos:`
   arrives in; G20/G21 says what the numbers in a *block* mean. Commanding `G20`
   does not change the report — measured on the board. Any inch display therefore
