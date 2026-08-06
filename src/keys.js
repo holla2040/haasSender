@@ -229,6 +229,10 @@ export const VERIFIED = new Set([
   // control memory — observed importing, filing by O-number, selecting and
   // erasing, and running the selected program on the real board
   'mode-list', 'select-program', 'erase-program',
+  // the machine's SD card, over the grbl stream: RECEIVE listed it and pulled
+  // meter.nc across as 535 blocks, SEND wrote a program back, and CYCLE START on
+  // the card page ran it on the board itself — mode bar reading OPERATION: DNC
+  'send', 'receive',
   // the run switches, each watched changing what reached the board: BLOCK DELETE
   // greying and skipping a `/` block, DRY RUN dropping M3/M8, OPTION STOP taking
   // the machine to Hold:0 on M01 and CYCLE START resuming it, SINGLE BLOCK

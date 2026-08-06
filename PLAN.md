@@ -28,11 +28,11 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 ## Where it stands
 
 All six phases are done except one item that needs a person at the bench. Of 132
-keys: **110 work**, **13 can never work** on this control, **9 are not built
+keys: **112 work**, **13 can never work** on this control, **7 are not built
 yet**. All thirteen display pages are real.
 
-The nine unbuilt: POWER UP RESTART, F1-F4, ZERO RETURN's ALL and SINGLE (homing,
-untestable without limit switches), and SEND / RECEIVE.
+The seven unbuilt: POWER UP RESTART, F1-F4, and ZERO RETURN's ALL and SINGLE
+(homing, untestable without limit switches).
 
 **The one thing left is Web Serial**, which has never seen a USB board and cannot
 be tested without someone plugging one in — see phase 6. It is deferred, not
@@ -250,6 +250,33 @@ The fiddliest behaviour in the project. Budget accordingly.
       Offsets, tool lengths, MDI blocks and EDIT words all go in this way.
 
 ## Still open
+
+- [x] **SEND / RECEIVE / DNC — the machine's own SD card.** grblHAL exposes the
+      card on the *grbl stream*, which is worth knowing: `$F` lists, `$F<=` dumps a
+      file, `$F=` runs one, `$FD=` deletes. So RECEIVE works over any transport,
+      including serial.
+      - **RECEIVE** lists the card into the LIST pane, then pulls the highlighted
+        file into control memory. Files over 256 KB are refused — browser storage
+        is a few megabytes for *everything*, and `github.nc` on this card is 4.19 MB
+        on its own — and the refusal points at DNC, which can run it anyway.
+      - **SEND** writes the selected program back. The one operation that is *not*
+        on the grbl stream: there is no write-file command, only the HTTP endpoint,
+        so it needs the network transport and says so on serial or the simulator.
+        It strips the O-number line, because the board reads the file with no help
+        from this control and answers `O0123` with an error.
+      - **CYCLE START on the card page is DNC** — `$F=` hands the whole job to the
+        board, which runs it off its own card with no sender in the loop. Nothing
+        to drop, nothing to flow-control, and the only way to run a file too big to
+        hold in control memory. The mode bar reads `OPERATION: DNC`.
+- [ ] **The firmware has its own BLOCK DELETE, SINGLE BLOCK and OPTION STOP.**
+      `$B`, `$S` and `$O` toggle them, found in `$HELP Commands`. The three switches
+      here are sender-side, on the stated reasoning that "grbl has no optional-stop
+      switch" — which is true of grbl and **wrong about grblHAL**. Ours work and are
+      verified, but the machine's are more faithful: the parser does the skipping
+      instead of this control rewriting the program, and they would apply to a job
+      the board runs off its own card, where the sender is not in the loop at all.
+      Worth switching to, and worth checking `$S` really means what SINGLE BLOCK
+      means before doing it.
 
 - [x] **JOG LOCK** latches a jog key into a continuous move — `$J=` for the axis's
       declared travel (`$130`+, so the move ends where the machine would have

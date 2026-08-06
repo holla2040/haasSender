@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
@@ -78,6 +78,10 @@ const s = {
   // What the jog handle does, and which axis JOG LOCK has latched into a
   // continuous move. Both are front-panel state, not the machine's.
   handleMode: 'jog', latched: null,
+  // The machine's SD card. grblHAL exposes it on the grbl stream itself — `$F`
+  // lists, `$F<=` dumps, `$F=` runs — so RECEIVE works over any transport. SEND
+  // is the exception: there is no write-file command, only the HTTP endpoint.
+  sdFiles: [], sdIndex: 0, listPage: 'memory', receiving: null, boardHost: null,
   dial: 0
 }
 
@@ -108,6 +112,13 @@ function press (id) {
   // itself teaches them what the machine underneath can actually do.
   const why = UNAVAILABLE.get(id)
   if (why) { s.message = why; return invalidate() }
+
+  // LIST PROGRAM steps back from the card to control memory, before the mode keys
+  // get it — otherwise there is no way off the card page except another mode.
+  if (id === 'mode-list' && s.activePane === 'list' && s.listPage === 'sd') {
+    s.listPage = 'memory'
+    return invalidate()
+  }
 
   // Mode keys — three modes only, per T2.11.
   if (MODES[id]) { Object.assign(s, MODES[id]); return invalidate() }
@@ -180,11 +191,15 @@ function press (id) {
     if (id === 'end') { s.paramRow = Math.max(0, n - 1); return invalidate() }
   }
 
-  // LIST PROGRAM: the cursor walks control memory.
-  if (s.activePane === 'list' && s.programs.length) {
+  // LIST PROGRAM: the cursor walks control memory, or the machine's card.
+  if (s.activePane === 'list') {
     const move = { up: -1, down: 1, 'page-up': -8, 'page-down': 8, home: -1e9, end: 1e9 }[id]
     if (move !== undefined) {
-      s.listIndex = Math.max(0, Math.min(s.programs.length - 1, s.listIndex + move))
+      if (s.listPage === 'sd' && s.sdFiles.length) {
+        s.sdIndex = Math.max(0, Math.min(s.sdFiles.length - 1, s.sdIndex + move))
+      } else if (s.programs.length) {
+        s.listIndex = Math.max(0, Math.min(s.programs.length - 1, s.listIndex + move))
+      }
       return invalidate()
     }
   }
@@ -235,6 +250,8 @@ function press (id) {
 
     case 'select-program': return selectProgram()
     case 'erase-program': return eraseProgram()
+    case 'receive': return receive()
+    case 'send': return sendToCard()
 
     case 'block-delete': return toggleSwitch('blockDelete', 'BLOCK DELETE')
     case 'option-stop': return toggleSwitch('optionStop', 'OPTION STOP')
@@ -539,6 +556,104 @@ function toggleSwitch (key, label) {
   return invalidate()
 }
 
+// ------------------------------------------------------------- the machine's card
+
+// A program pulled off the card lands in browser storage, which is a few megabytes
+// for everything put together. The card is not: `github.nc` on this one is 4.19 MB
+// on its own. Refuse rather than wedge the directory — and say what to do instead,
+// because the board can run that file perfectly well without our help.
+const RECEIVABLE_BYTES = 256 * 1024
+
+/** RECEIVE: first press lists the card, second press pulls the highlighted file. */
+function receive () {
+  if (!link) { s.message = 'not connected'; return invalidate() }
+
+  if (s.listPage !== 'sd') {
+    s.sdFiles = []
+    s.mode = 'EDIT'; s.fn = 'LIST'; s.activePane = 'list'; s.listPage = 'sd'
+    s.message = 'reading the card'
+    link.send('$F\n')
+    return invalidate()
+  }
+
+  const f = s.sdFiles[s.sdIndex]
+  if (!f) { s.message = 'no file to receive'; return invalidate() }
+  if (f.size > RECEIVABLE_BYTES) {
+    s.message = `${f.name} is ${(f.size / 1024).toFixed(0)} KB — too big for control memory. CYCLE START runs it off the card instead.`
+    return invalidate()
+  }
+  // The dump arrives as bare g-code lines, terminated by `ok`. Collect until then.
+  s.receiving = { name: f.name, lines: [] }
+  s.message = `receiving ${f.name}`
+  link.send(`$F<=${f.name}\n`)
+  invalidate()
+}
+
+/**
+ * SEND: put the selected program on the machine's card.
+ *
+ * The only one of the three that is not on the grbl stream — grblHAL can list,
+ * dump, run and delete over it, but not write — so this goes to the HTTP endpoint
+ * and therefore needs the network transport. Over serial or the simulator there is
+ * no card to write to, and the control says that rather than failing quietly.
+ */
+async function sendToCard () {
+  if (!s.boardHost) {
+    s.message = 'SEND needs the network connection — the card is written over HTTP'
+    return invalidate()
+  }
+  if (!s.program.lines.length) { s.message = 'no program selected to send'; return invalidate() }
+
+  const name = `/${s.program.o || 'O00000'}.nc`
+  // What lands on the card has to be runnable *by the machine*, which will read it
+  // with no help from this control: the O-number line is a HAAS program name, not
+  // g-code, and the board answers it with an error the moment it reads the file.
+  // Everything else stays as written — comments and `/` blocks included — because
+  // the board has its own block-delete switch and the file should still be the
+  // program, not this panel's current opinion of it.
+  const body = s.program.lines
+    .filter(l => !/^O\s*\d{1,5}$/i.test(stripComments(l.text)))
+    .map(l => l.text).join('\n') + '\n'
+  const blob = new Blob([body], { type: 'text/plain' })
+
+  const form = new FormData()
+  form.append('path', '/')
+  form.append(name + 'S', String(blob.size))       // ESP3D wants the byte count
+  form.append('myfile', blob, name)                // ...and the full path as the name
+
+  s.message = `sending ${name} to the card`
+  invalidate()
+  try {
+    const res = await fetch(`http://${s.boardHost}/sdfiles`, { method: 'POST', body: form })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    s.message = `${name} written to the card (${blob.size} bytes)`
+    if (s.listPage === 'sd') link?.send('$F\n')    // show it in the listing
+  } catch (e) {
+    s.message = `could not write ${name} to the card — ${e.message}`
+  }
+  invalidate()
+}
+
+/**
+ * DNC: let the machine run the file off its own card.
+ *
+ * `$F=` hands the whole job to the board, which reads and executes it without a
+ * sender in the loop — no streaming, no flow control, nothing for a dropped link
+ * to interrupt. It is also the only way to run the files that are too big to hold
+ * in control memory at all.
+ */
+function runFromCard () {
+  const f = s.sdFiles[s.sdIndex]
+  if (!f) { s.message = 'no file selected on the card'; return invalidate() }
+  s.alarm = null
+  s.mode = 'OPERATION'; s.fn = 'DNC'
+  s.cycleStartedAt = Date.now(); s.cycleMs = 0
+  s.job = { dnc: true, name: f.name, sentAll: false }
+  s.message = `${f.name} — running from the card`
+  link?.send(`$F=${f.name}\n`)
+  invalidate()
+}
+
 // -------------------------------------------------------- the program directory
 
 const selected = () => s.programs[s.listIndex] ?? null
@@ -822,6 +937,11 @@ function cycleStart () {
     return invalidate()
   }
 
+  // Standing on the card page, CYCLE START runs the highlighted file *on the
+  // board* rather than streaming it from here. That is what DNC means, and it is
+  // the only way to run the files too big to fit in control memory.
+  if (s.activePane === 'list' && s.listPage === 'sd') return runFromCard()
+
   if (!s.program.lines.length) {
     s.message = 'no program selected — press LIST PROGRAM, then SELECT PROGRAM'
     return invalidate()
@@ -889,6 +1009,10 @@ function onLine (line) {
     const last = s.mdi[s.mdi.length - 1]
     if (last && !last.error) last.error = `error ${n}: ${describeError(n)}`
     logAlarm('ERROR', n, describeError(n), null)
+    // A job the board is running off its own card has stopped. Nothing here is
+    // streaming it, so nothing else would ever notice — and the cycle timer would
+    // count on for a program that is no longer running.
+    if (s.job?.dnc) { s.job = null; s.cycleStartedAt = null }
     return invalidate()
   }
 
@@ -901,6 +1025,26 @@ function onLine (line) {
     if (setting[1] === '13') s.reportUnits = setting[2].trim() === '1' ? 'IN' : 'MM'
     s.settings = { ...s.settings, [setting[1]]: setting[2].trim() }
     return invalidate()
+  }
+
+  // A file dump from the card: bare g-code lines until `ok`. Everything in
+  // between belongs to the file, not to the console, so it is swallowed here
+  // rather than posted a line at a time as a status message.
+  if (s.receiving) {
+    if (line === 'ok') {
+      const text = s.receiving.lines.join('\n')
+      const name = s.receiving.name.replace(/^\//, '')
+      s.receiving = null
+      s.listPage = 'memory'
+      return storeProgram(name, text)
+    }
+    if (line.startsWith('error:')) {
+      s.message = `could not read ${s.receiving.name} — error ${line.slice(6)}`
+      s.receiving = null
+      return invalidate()
+    }
+    s.receiving.lines.push(line)
+    return
   }
 
   // A bare `ok` is the machine acknowledging a block we sent by hand. It is not
@@ -926,6 +1070,11 @@ function onLine (line) {
     if (t) s.tool = Number(t[1])
   } else if (fb.kind === 'TLO') {
     s.tlo = fb.value[2] ?? 0
+  } else if (fb.kind === 'FILE') {
+    // `[FILE:/meter.nc|SIZE:6351]` — the card's directory, one line per file.
+    const [name, size] = String(fb.value).split('|SIZE:')
+    s.sdFiles = [...s.sdFiles, { name, size: Number(size) || 0 }]
+    s.sdIndex = Math.min(s.sdIndex, s.sdFiles.length - 1)
   } else if (/^G5[4-9](\.[1-3])?$/.test(fb.kind)) {
     s.offsets = { ...s.offsets, [fb.kind]: fb.value }
   } else if (fb.kind === 'MSG') {
@@ -948,7 +1097,12 @@ function applyStatus (st) {
   // so acked minus what is still queued is the block actually under the tool.
   // (`Ln:` is not usable for this: it counts blocks executed since power-up, not
   // source lines, unless the program carries N words.)
-  if (s.job && st.bf && s.plannerSize) {
+  // A job the board is running off its own card has no wire list here to track:
+  // it is over when the machine goes back to Idle, and it has not started until
+  // it has left Idle at least once.
+  if (s.job?.dnc) {
+    if (!s.job.sentAll && st.state !== 'Idle') s.job.sentAll = true
+  } else if (s.job && st.bf && s.plannerSize) {
     // `Bf:` counts planner blocks still to be *completed*, which includes the one
     // under the tool right now. So acked minus queued is the index of the block
     // being executed, not of the last one finished — subtracting a further 1, as
@@ -1033,6 +1187,8 @@ async function connect () {
     $('link').textContent = link.describe()
     $('link').className = 'ok'
     s.link = link.kind.toUpperCase()
+    // Only the network transport can write to the card — see sendToCard().
+    s.boardHost = kind === 'websocket' ? $('host').value : null
     if (kind === 'websocket' && $('host').value) remember.set($('host').value)
     link.send('$I\n')
     link.send('$G\n')

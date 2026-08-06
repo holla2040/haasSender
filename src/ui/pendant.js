@@ -14,18 +14,18 @@ function keyTpl (key, press) {
   // Three states, because three are true: it works, it can never work, or it is
   // simply not built yet. Now that most of the panel works, the *exceptions* are
   // what get marked — a working key looks like a key, which is the point.
+  //
+  // No `title` tooltips: the legend printed on a key is what a real pendant gives
+  // you, and a key that cannot do its job says so on the status bar when pressed,
+  // which is where an operator is already looking.
   const why = UNAVAILABLE.get(key.id)
-  const todo = !why && !VERIFIED.has(key.id)
-  const legend = key.lines.join(' ')
   return html`
     <button
       class=${cls('key', key.variant, key.big && 'big', key.shift && 'shift',
                   key.rule && 'rule', key.inline && 'inline',
-                  todo && 'todo', why && 'na')}
+                  !why && !VERIFIED.has(key.id) && 'todo', why && 'na')}
       style=${style}
       data-key=${key.id}
-      title=${why ? `${legend} — ${why}`
-              : todo ? `${legend} — not implemented yet` : legend}
       @pointerdown=${(e) => { e.preventDefault(); press(key.id) }}>
       ${key.corner ? html`<i class="corner ${key.corner}"></i>` : nothing}
       ${key.sup ? html`<span class="sup">${key.sup}</span>` : nothing}
@@ -65,32 +65,31 @@ export const pendant = (state, actions) => {
 
         <div class="pair">
           <div>
-            <button class="pb green" @click=${() => press('power-on')} aria-label="Power on"></button>
+            <button class="pb green" data-key="power-on" @click=${() => press('power-on')} aria-label="Power on"></button>
             <span class="legend">POWER<br>ON</span>
           </div>
           <div>
-            <button class="pb red" @click=${() => press('power-off')} aria-label="Power off"></button>
+            <button class="pb red" data-key="power-off" @click=${() => press('power-off')} aria-label="Power off"></button>
             <span class="legend">POWER<br>OFF</span>
           </div>
         </div>
 
         <span class="legend">EMERGENCY STOP</span>
-        <button class="estop" @click=${() => press('estop')} aria-label="Emergency stop"><i></i></button>
+        <button class="estop" data-key="estop" @click=${() => press('estop')} aria-label="Emergency stop"><i></i></button>
 
         <span class="legend">HANDLE JOG</span>
         <div class="dial"
-             @wheel=${(e) => { e.preventDefault(); actions.jogWheel(e.deltaY < 0 ? 1 : -1) }}
-             title="Scroll to jog by the selected increment">
+             @wheel=${(e) => { e.preventDefault(); actions.jogWheel(e.deltaY < 0 ? 1 : -1) }}>
           <i style="transform: rotate(${state.dial}deg)"></i>
         </div>
 
         <div class="pair">
           <div>
-            <button class="pb green" @click=${() => press('cycle-start')} aria-label="Cycle start"></button>
+            <button class="pb green" data-key="cycle-start" @click=${() => press('cycle-start')} aria-label="Cycle start"></button>
             <span class="legend">CYCLE<br>START</span>
           </div>
           <div>
-            <button class="pb red" @click=${() => press('feed-hold')} aria-label="Feed hold"></button>
+            <button class="pb red" data-key="feed-hold" @click=${() => press('feed-hold')} aria-label="Feed hold"></button>
             <span class="legend">FEED<br>HOLD</span>
           </div>
         </div>

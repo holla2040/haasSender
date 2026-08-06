@@ -275,8 +275,34 @@ const SETTING_NOTE = {
   132: 'Z max travel'
 }
 
+/**
+ * The machine's own SD card, listed by `$F` over the grbl stream.
+ *
+ * Separate from control memory on purpose: these files live on the machine, not
+ * in this control, and the difference matters. A file small enough to hold can be
+ * pulled across with RECEIVE; one too big can still be *run*, by the board, off
+ * its own card — which is what CYCLE START does here and what DNC means.
+ */
+function cardBody (s) {
+  if (!s.sdFiles.length) {
+    return html`<pre class="dim">${s.receiving ? 'receiving…' : 'no files on the card, or not read yet'}
+
+RECEIVE reads the card.</pre>`
+  }
+  const from = Math.max(0, Math.min(s.sdIndex - 6, s.sdFiles.length - 14))
+  return html`<pre>${s.sdFiles.slice(from, from + 14).map((f, i) => html`<div
+    class=${from + i === s.sdIndex ? 'cur' : ''}>${(f.name + '                        ').slice(0, 24)}${
+    ('        ' + (f.size > 1024 ? (f.size / 1024).toFixed(0) + ' KB' : f.size + ' B')).slice(-9)}</div>`)}
+
+<span class="dim">RECEIVE copies the highlighted file into control memory.
+CYCLE START runs it on the machine, straight off the card,
+which is the only way to run one too big to copy.
+SEND writes the selected program back. LIST PROGRAM returns.</span></pre>`
+}
+
 /** Control memory: what LIST PROGRAM shows, filed by O-number. */
 function listBody (s) {
+  if (s.listPage === 'sd') return cardBody(s)
   if (!s.programs.length) {
     return html`<pre class="dim">control memory is empty
 
@@ -349,11 +375,13 @@ these are the places that shows:
 
 const PLACEHOLDER = {}
 
-/** OFFSET is two pages behind one key, so its title has to say which one. */
+/** Two panes carry two pages behind one key, so the title has to say which. */
 const mainTitle = (s) =>
   s.activePane === 'offset'
     ? (s.offsetPage === 'tool' ? 'TOOL OFFSET' : 'WORK OFFSET')
-    : (MAIN_TITLE[s.activePane] ?? '')
+    : s.activePane === 'list'
+      ? (s.listPage === 'sd' ? 'MACHINE SD CARD' : 'LIST PROGRAM')
+      : (MAIN_TITLE[s.activePane] ?? '')
 
 function mainBody (s) {
   if (s.activePane === 'position') return positionBody(s)
