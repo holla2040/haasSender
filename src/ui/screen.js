@@ -7,10 +7,16 @@ import { html, nothing } from 'lit-html'
 
 const AXES = ['X', 'Y', 'Z', 'A']
 
-const fmt = (v, inches) => (v ?? 0).toFixed(inches ? 4 : 3)
+/**
+ * A machine readout. When no status report has arrived for a while every number
+ * on this screen is a memory rather than a reading, so show nothing at all: a
+ * frozen DRO after a dropped socket tells a student exactly the same lie as a
+ * disconnected control sitting at 0.000.
+ */
+export const fmt = (v, inches, stale) => (stale ? '—' : (v ?? 0).toFixed(inches ? 4 : 3))
 
-const droRow = (label, values, inches) => html`
-  <b>${label}</b>${values.map(v => html`<span>${fmt(v, inches)}</span>`)}`
+const droRow = (label, values, inches, stale) => html`
+  <b>${label}</b>${values.map(v => html`<span>${fmt(v, inches, stale)}</span>`)}`
 
 /** The four readouts a HAAS shows on the POSITION page. */
 function positionBody (s) {
@@ -19,10 +25,10 @@ function positionBody (s) {
   return html`
     <div class="dro big">
       <b></b>${AXES.map(a => html`<span class="dim">${a}</span>`)}
-      ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), inches)}
-      ${droRow('WORK ' + s.wcs, work, inches)}
-      ${droRow('MACHINE', s.mpos, inches)}
-      ${droRow('DIST TO GO', s.dtg, inches)}
+      ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), inches, s.stale)}
+      ${droRow('WORK ' + s.wcs, work, inches, s.stale)}
+      ${droRow('MACHINE', s.mpos, inches, s.stale)}
+      ${droRow('DIST TO GO', s.dtg, inches, s.stale)}
     </div>`
 }
 
@@ -86,30 +92,32 @@ export const screen = (s) => html`
 
     ${pane('tool', 'ACTIVE TOOL', html`
       <pre>T${String(s.tool).padStart(2, '0')}
-<span class="dim">OFFSET</span> ${fmt(s.tlo, s.units === 'IN')}</pre>`, false)}
+<span class="dim">OFFSET</span> ${fmt(s.tlo, s.units === 'IN', s.stale)}</pre>`, false)}
 
     ${pane('coolant', 'COOLANT', html`
-      <pre class=${s.coolant ? 'k' : 'dim'}>${s.coolant ? 'ON' : 'OFF'}</pre>`, false)}
+      <pre class=${s.stale ? 'dim' : s.coolant ? 'k' : 'dim'}>${s.stale ? '—' : s.coolant ? 'ON' : 'OFF'}</pre>`, false)}
 
     ${pane('main', MAIN_TITLE[s.activePane] ?? '', mainBody(s), s.activePane !== 'program')}
 
     ${pane('spindle', 'MAIN SPINDLE', html`
-      <pre><span class="dim">RPM</span> ${Math.round(s.spindle)}
-<span class="dim">DIR</span> ${s.spindleDir > 0 ? 'FWD' : s.spindleDir < 0 ? 'REV' : '—'}</pre>`, false)}
+      <pre><span class="dim">RPM</span> ${s.stale ? '—' : Math.round(s.spindle)}
+<span class="dim">DIR</span> ${s.stale || !s.spindleDir ? '—' : s.spindleDir > 0 ? 'FWD' : 'REV'}</pre>`, false)}
 
     ${pane('position', 'POSITION', html`
       <div class="dro">
         <b></b>${AXES.map(a => html`<span class="dim">${a}</span>`)}
-        ${droRow('WORK', s.mpos.map((v, i) => v - s.wco[i]), s.units === 'IN')}
+        ${droRow('WORK', s.mpos.map((v, i) => v - s.wco[i]), s.units === 'IN', s.stale)}
       </div>`, false)}
 
     ${pane('timers', 'TIMERS', html`
-      <pre><span class="dim">FEED</span>  ${Math.round(s.feed)}
-<span class="dim">OVR</span>   ${s.ov.feed}% / ${s.ov.rapid}% / ${s.ov.spindle}%
+      <pre><span class="dim">FEED</span>  ${s.stale ? '—' : Math.round(s.feed)}
+<span class="dim">OVR</span>   ${s.stale ? '—' : `${s.ov.feed}% / ${s.ov.rapid}% / ${s.ov.spindle}%`}
 <span class="dim">INC</span>   ${s.increment}</pre>`, false)}
 
     ${pane('status', null, html`
-      <pre>${s.machineState}  ${s.link}  <span class="dim">${s.units}</span>  ${s.message ?? ''}</pre>`, false)}
+      <pre>${s.stale
+        ? html`<span class="k">LINK DOWN</span>`
+        : html`${s.machineState}  ${s.link}`}  <span class="dim">${s.units}</span>  ${s.message ?? ''}</pre>`, false)}
 
     <section class=${'pane pane-alarm' + (s.alarm ? ' on' : '')}>
       <pre>${s.alarm ?? 'NO ALARM'}</pre>

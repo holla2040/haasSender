@@ -24,7 +24,7 @@ Offsets, current commands, alarms and on-control editing are phases 4-5.
 
 ```
 npm install
-npm test          # 24 tests, no hardware needed
+npm test          # 25 tests, no hardware needed
 npm run dev       # http://localhost:8000
 npm run build     # dist/index.html.gz for the board's SD card
 ```

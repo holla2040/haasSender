@@ -8,6 +8,11 @@ import { MODES, DISPLAY_PANES } from './keys.js'
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
 
+// The board auto-pushes a report every 250 ms and we poll after 500 ms of
+// silence, so two seconds without one means the link is gone, not merely quiet.
+// Long enough that a busy tab or a slow serial write does not flicker it.
+const STALE_MS = 2000
+
 // Handle-jog increments. The keys are printed with both scales — ".0001 / .1" —
 // because the same key means thousandths of an inch or tenths of a millimetre
 // depending on the active unit.
@@ -34,7 +39,7 @@ const s = {
   activePane: 'position',
   mpos: [0, 0, 0, 0], wco: [0, 0, 0, 0], dtg: [0, 0, 0, 0], operator: [0, 0, 0, 0],
   wcs: 'G54', units: 'MM', incIndex: 1,
-  machineState: '—', link: 'OFFLINE', feed: 0, spindle: 0, spindleDir: 0,
+  machineState: '—', link: 'OFFLINE', stale: true, feed: 0, spindle: 0, spindleDir: 0,
   ov: { feed: 100, rapid: 100, spindle: 100 },
   tool: 0, tlo: 0, coolant: false, jogLock: false,
   alarm: null, message: '', input: '',
@@ -241,6 +246,14 @@ function applyStatus (st) {
 
 async function connect () {
   const kind = $('kind').value
+  // Let go of the previous link first. Without this, reconnecting leaves the old
+  // transport alive with its callback still pointing here — an orphaned simulator
+  // goes on pushing `Idle|MPos:0,0,0,0` at 4 Hz and overwrites the readings from
+  // the machine that is actually connected. Observed: the DRO sat at 0.000 through
+  // a jog that had really happened.
+  try { await link?.disconnect() } catch { /* already gone */ }
+  link = null
+
   try {
     link = kind === 'websocket' ? websocketTransport({ host: $('host').value })
       : kind === 'serial' ? serialTransport()
@@ -271,7 +284,14 @@ async function connect () {
 }
 
 setInterval(() => {
-  if (link && performance.now() - lastReportAt > STATUS_IDLE_MS) link.sendRealtime(0x3F)
+  const quiet = performance.now() - lastReportAt
+  if (link && quiet > STATUS_IDLE_MS) link.sendRealtime(0x3F)
+
+  // Staleness watchdog. A dropped socket does not clear `link` — the websocket
+  // just stops delivering — so without this the DRO holds its last reading and
+  // goes on looking live. Blank it instead and say the link is down.
+  const stale = !link || quiet > STALE_MS
+  if (stale !== s.stale) { s.stale = stale; invalidate() }
 }, 200)
 
 // Where is the machine? In precedence order:
