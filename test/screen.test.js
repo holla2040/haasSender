@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fmt, displayScale, MM_PER_IN } from '../src/ui/screen.js'
+import { fmt, displayScale, MM_PER_IN, clock } from '../src/ui/screen.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
 // keeps showing its last value after the link drops is the same lie as a
@@ -26,4 +26,13 @@ test('an inch display of a millimetre report converts rather than reformats', ()
   // 20 mm is 0.7874", not 20.0000".
   assert.equal(fmt(20 * displayScale('MM', 'IN'), true, false), '0.7874')
   assert.equal(fmt(1 * displayScale('IN', 'MM'), false, false), '25.400')
+})
+
+test('cycle time reads as a control clock, and rolls over properly', () => {
+  assert.equal(clock(0), '00:00:00')
+  assert.equal(clock(null), '00:00:00')
+  assert.equal(clock(999), '00:00:00')      // truncate, never round a second up
+  assert.equal(clock(61_000), '00:01:01')
+  assert.equal(clock(3_599_000), '00:59:59')
+  assert.equal(clock(3_661_000), '01:01:01')
 })

@@ -133,7 +133,12 @@ touching anything that is not on the pendant.
 - [ ] **After an `error:N` halts a job, CYCLE START restarts from the top** rather
       than refusing. The dead "resume a stopped stream" branch that used to swallow
       it is gone, but a control should probably insist on RESET first.
-- [ ] Timers pane: cycle time, last cycle, parts counter.
+- [x] Timers pane: THIS CYCLE, LAST CYCLE and a parts counter, off wall-clock time
+      so a throttled tab cannot make a cycle look shorter than it was. Only a
+      completed cycle counts a part; RESET abandons it. FEED moved to the status
+      bar and INC to the icon bar to make room for them.
+      **Not persisted** — the counter starts at zero each session. A HAAS keeps its
+      M30 counter across power cycles; add that if anyone wants it.
 - [ ] **Manual sends during a running job corrupt flow control.** Pre-existing, and
       found while wiring the `$G` refresh: the streamer credits every `ok` it sees
       against a block it sent, so any line typed into MDI mid-job makes it think one
@@ -141,9 +146,10 @@ touching anything that is not on the pendant.
       high. `send()` now declines to append `$G` while `s.job` is set, but the
       general case — an operator typing a block mid-program — is still open. Either
       refuse manual sends during a job, or have the streamer count its own acks.
-- [ ] Finish the Overrides group — rapid and spindle override keys are wired but
-      unconfirmed; verify each byte actually moves `Ov:` in the status report.
-- [ ] Add every key that now works to `VERIFIED` in `keys.js`.
+- [x] Finish the Overrides group — every byte watched moving `Ov:` on the board:
+      feed ±10% and 100%, rapid 100/50/25, spindle ±10% and 100%, and the coolant
+      toggle appearing in `A:`.
+- [x] Add every key that now works to `VERIFIED` in `keys.js`.
 
 ## Phase 4 — Setup mode
 
@@ -247,6 +253,14 @@ Things that cost real time to discover. Do not re-derive them.
   not `index.html.gz`), and a companion field named `<path>S` must carry the byte
   count. That combination is verified to work; neither was tested in isolation.
   Exact command in README.
+- **`Ov:` and `A:` are missing from most reports, and absence is not a value.**
+  grblHAL leaves them out of compact reports and refreshes them every so often;
+  measured on the board, flood stayed on through reports carrying no `A:` at all.
+  Reading their absence as zero made the coolant lamp and the spindle direction
+  flicker off several times a second during a cut, and made the override keys look
+  dead for a second or two. Update those fields only when the report carries them
+  — an *empty* `A:` is different, that is the machine saying everything is off —
+  and send a `?` after an override key so the readout follows within a frame.
 - **CYCLE START has three jobs and they must be checked in the right order.**
   Resume a held machine, step in SINGLE BLOCK, or start a program. The hold check
   has to come first: an `M01` hold leaves the streamer *running*, so every other

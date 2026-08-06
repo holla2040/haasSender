@@ -28,6 +28,13 @@ export const MM_PER_IN = 25.4
 export const displayScale = (reportUnits, units) =>
   reportUnits === units ? 1 : units === 'IN' ? 1 / MM_PER_IN : MM_PER_IN
 
+/** Cycle time, the way a control shows it: HH:MM:SS, counting up from zero. */
+export const clock = (ms) => {
+  const t = Math.max(0, Math.floor((ms ?? 0) / 1000))
+  return [Math.floor(t / 3600), Math.floor(t / 60) % 60, t % 60]
+    .map(v => String(v).padStart(2, '0')).join(':')
+}
+
 const droRow = (label, values, s) => {
   const k = displayScale(s.reportUnits, s.units)
   const inches = s.units === 'IN'
@@ -175,21 +182,24 @@ export const screen = (s) => html`
       </div>`, false)}
 
     ${pane('timers', 'TIMERS', html`
-      <pre><span class="dim">FEED</span>  ${s.stale ? '—' : Math.round(s.feed)}
-<span class="dim">OVR</span>   ${s.stale ? '—' : `${s.ov.feed}% / ${s.ov.rapid}% / ${s.ov.spindle}%`}
-<span class="dim">INC</span>   ${s.increment}</pre>`, false)}
+      <pre><span class="dim">THIS </span> ${clock(s.cycleMs)}
+<span class="dim">LAST </span> ${clock(s.lastCycleMs)}
+<span class="dim">PARTS</span> ${s.parts}
+<span class="dim">OVR  </span> ${s.stale ? '—' : `${s.ov.feed}/${s.ov.rapid}/${s.ov.spindle}`}</pre>`, false)}
 
     ${pane('status', null, html`
       <pre>${s.stale
         ? html`<span class="k">LINK DOWN</span>`
-        : html`${s.machineState}  ${s.link}`}  <span class="dim">${s.units}</span>  ${s.message ?? ''}</pre>`, false)}
+        : html`${s.machineState}  ${s.link}  F${Math.round(s.feed)}`}  <span
+        class="dim">${s.units}</span>  ${s.message ?? ''}</pre>`, false)}
 
     <section class=${'pane pane-alarm' + (s.alarm ? ' on' : '')}>
       <pre>${s.alarm ?? 'NO ALARM'}</pre>
     </section>
 
     ${pane('icons', null, html`<pre class="k">${
-      [s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
+      ['INC ' + s.increment,
+        s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
         s.blockDelete && 'BLK DEL', s.jogLock && 'JOG LOCK'].filter(Boolean).join('   ')
     }</pre>`, false)}
 

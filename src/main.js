@@ -55,6 +55,9 @@ const s = {
   blockDelete: false, optionStop: false, dryRun: false, singleBlock: false,
   program: { o: '', name: '', lines: [], current: 0 },
   job: null, plannerSize: 100,
+  // The timers pane. `cycleStartedAt` is wall-clock rather than a tick count so a
+  // throttled background tab cannot make a cycle look shorter than it was.
+  cycleStartedAt: null, cycleMs: 0, lastCycleMs: 0, parts: 0,
   dial: 0
 }
 
@@ -69,6 +72,7 @@ const increment = () => INCREMENTS[s.units][s.incIndex]
 
 function paint () {
   s.increment = increment()
+  if (s.cycleStartedAt) s.cycleMs = Date.now() - s.cycleStartedAt
   s.screen = screen(s)
   render(pendant(s, { press, jogWheel }), $('app'))
   dirty = false
@@ -109,7 +113,15 @@ function press (id) {
   const incAt = INCREMENT_KEYS.indexOf(id)
   if (incAt >= 0) { s.incIndex = incAt; return invalidate() }
 
-  if (REALTIME[id] !== undefined) { link?.sendRealtime(REALTIME[id]); return }
+  if (REALTIME[id] !== undefined) {
+    link?.sendRealtime(REALTIME[id])
+    // `Ov:` and `A:` are not in every report — grblHAL leaves them out of most
+    // and refreshes them every so often — so an override or coolant key would
+    // otherwise take a second or two to show up. Ask for a report instead of
+    // assuming the press worked: the display still shows the machine, just sooner.
+    link?.sendRealtime(0x3F)
+    return
+  }
 
   if (AXIS_KEYS[id]) { jogAxis(...AXIS_KEYS[id]); return }
 
@@ -123,6 +135,7 @@ function press (id) {
       // byte to a machine with nothing queued and never started the program.
       streamer?.reset()
       s.job = null
+      s.cycleStartedAt = null      // an abandoned cycle is not a part
       s.alarm = id === 'estop' ? 'EMERGENCY STOP (software)' : null
       s.message = id === 'estop' ? 'this is not a hardware E-stop' : ''
       return invalidate()
@@ -335,6 +348,7 @@ function cycleStart () {
   s.alarm = null
   s.mode = 'OPERATION'; s.fn = 'MEM'
   s.activePane = 'program'
+  s.cycleStartedAt = Date.now(); s.cycleMs = 0
   s.job = { sentAll: false, rows }
   streamer.singleBlock = s.singleBlock
   streamer.start(wire)
@@ -429,10 +443,24 @@ function applyStatus (st) {
     s.job = null
     s.message = 'program complete'
     s.program.current = 0
+    // A cycle that finished is a part made, and the counter is what a shop
+    // actually watches. Only a completed cycle counts — one stopped by RESET
+    // clears the timer without incrementing anything.
+    s.lastCycleMs = s.cycleMs
+    s.parts++
+    s.cycleStartedAt = null
     link?.send('$G\n')      // the program may have left the modal state elsewhere
   }
-  s.spindleDir = st.accessory?.includes('S') ? 1 : st.accessory?.includes('C') ? -1 : 0
-  s.coolant = !!st.accessory?.includes('F')
+  // Only when the machine actually told us. grblHAL leaves `A:` out of most
+  // reports and refreshes it every so often — measured on the board, flood stayed
+  // on through reports with no `A:` at all — so treating its absence as "off"
+  // made the spindle direction and the coolant lamp flicker to nothing several
+  // times a second during a cut. An empty `A:` is different: that is the machine
+  // saying everything is off, and it counts.
+  if (st.accessory !== undefined) {
+    s.spindleDir = st.accessory.includes('S') ? 1 : st.accessory.includes('C') ? -1 : 0
+    s.coolant = st.accessory.includes('F')
+  }
   if (st.state === 'Alarm') { if (!s.alarm) s.alarm = 'ALARM' } else if (st.state !== 'Alarm') {
     if (s.alarm?.startsWith('ALARM') && st.state === 'Idle') s.alarm = null
   }

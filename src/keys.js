@@ -205,8 +205,12 @@ export const VERIFIED = new Set([
   'inc-0001', 'inc-001', 'inc-01', 'inc-1',
   // linear jog, $J= confirmed against both the simulator and the real board
   'jog-x-plus', 'jog-x-minus', 'jog-y-plus', 'jog-y-minus', 'jog-z-plus', 'jog-z-minus',
-  // feed override bytes 0x90/0x91/0x92, covered by the simulator override test
+  // every override byte, each watched moving `Ov:` on the real board
   'feed-minus', 'feed-100', 'feed-plus',
+  'spindle-minus', 'spindle-100', 'spindle-plus',
+  'rapid-25', 'rapid-50', 'rapid-100',
+  // flood toggle 0xA0 — seen turning `A:F` on and off on the board
+  'coolant',
   // M3/M4/M5, covered by the deferred M-code test and seen driving the spindle pane
   'spindle-cw', 'spindle-stop', 'spindle-ccw',
   // soft reset 0x18
