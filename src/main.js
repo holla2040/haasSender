@@ -755,10 +755,26 @@ function override (byte) {
 function jogWheel (dir) {
   s.dial = (s.dial + dir * 18) % 360
   invalidate()
+
+  // An explicit HANDLE CONTROL choice wins. One percent a click, fixed — the
+  // manual is specific about that, and it is not scaled by the jog increment
+  // keys, which govern axis motion only.
   if (s.handleMode === 'feed') return override(dir > 0 ? 0x93 : 0x94)
   if (s.handleMode === 'spindle') return override(dir > 0 ? 0x9C : 0x9D)
+
+  // "Also used to scroll through program code or menu items while editing" —
+  // F2.26. So any pane that has a cursor takes the handle, and it moves that
+  // cursor rather than the machine. Routed through press() so each pane keeps
+  // owning its own cursor and this does not have to know about any of them.
+  if (hasCursor()) return press(dir > 0 ? 'up' : 'down')
+
   jogAxis(0, dir)     // the dial jogs the axis the operator has selected; X for now
 }
+
+/** Panes with something for the handle to scroll. */
+const hasCursor = () =>
+  editing() || s.activePane === 'list' || s.activePane === 'offset' ||
+  s.activePane === 'param'
 
 function cycleStart () {
   // The machine is holding — from FEED HOLD, or from an M00/M01 the program ran

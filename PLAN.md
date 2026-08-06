@@ -258,8 +258,14 @@ The fiddliest behaviour in the project. Budget accordingly.
       stops it. Watched X run 0 → 33.666 and brake.
 - [x] **HANDLE CONTROL FEED / SPINDLE** turn the handle into an override knob, and
       **a click is one percent, not ten** — grbl has `0x93`/`0x94` and
-      `0x9C`/`0x9D` for that, measured on the board. Ten percent a click would make
-      the handle useless for the trimming it exists to do.
+      `0x9C`/`0x9D` for that, measured on the board. The manual is explicit and the
+      figure is fixed: *"adjust the feedrate in 1% increments"*. It is **not**
+      scaled by the jog-increment keys, which govern axis motion only.
+- [x] **The handle scrolls whatever has a cursor.** F2.26: the handle is *"also
+      used to scroll through program code or menu items while editing"*. So the
+      EDIT block cursor, the offset grid, the tool table, control memory and the
+      settings list all take it; a pane with no cursor leaves the handle jogging.
+      Routed through `press('up'/'down')` so each pane keeps owning its own cursor.
 
 - [x] **All thirteen display pages are real.** The last three landed together:
       - **CURRENT COMMANDS** breaks the `$G` modal string into named groups with
