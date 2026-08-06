@@ -254,6 +254,17 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 ## Still open
 
+- [x] **The handwheel actually works like a handwheel.** It answered a mouse wheel
+      and nothing else, which is undiscoverable on a control drawn as a knob —
+      clicking or dragging it did nothing at all. It now turns under a drag,
+      one detent per graduation on the ring it is drawn with, and the wheel still
+      works for anyone who finds it.
+      **And it moves the axis you chose.** `jogWheel` had `jogAxis(0, dir)` with a
+      "X for now" comment since phase 2, so the handle only ever moved X no matter
+      what. A jog key now selects the axis as well as stepping it — *"used to jog
+      axes (select in [HANDLE JOG] Mode)"* — and the icon bar shows which.
+      HELP documents all of it, which is where the tooltip's job went.
+
 - [x] **The screen is off when the control is off.** Three states, not two, and
       they are genuinely different things:
       *off* — an unlit panel with nothing on it, and every key dead but POWER ON;

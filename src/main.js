@@ -80,9 +80,11 @@ const s = {
   // The machine's own settings, as `$$` reports them. Read-only here: writing a
   // setting is a different kind of act from writing a work offset.
   settings: {}, paramRow: 0,
-  // What the jog handle does, and which axis JOG LOCK has latched into a
-  // continuous move. Both are front-panel state, not the machine's.
-  handleMode: 'jog', latched: null,
+  // The handwheel: what it does, which axis it moves, and which axis JOG LOCK has
+  // latched into a continuous move. All front-panel state, none of it the
+  // machine's. `jogAxis` is chosen by pressing a jog key, as on the machine —
+  // without it the handle only ever moved X.
+  handleMode: 'jog', jogAxis: 0, latched: null,
   // The machine's SD card. grblHAL exposes it on the grbl stream itself — `$F`
   // lists, `$F<=` dumps, `$F=` runs — so RECEIVE works over any transport. SEND
   // is the exception: there is no write-file command, only the HTTP endpoint.
@@ -227,7 +229,13 @@ function press (id) {
     return
   }
 
-  if (AXIS_KEYS[id]) { jogAxis(...AXIS_KEYS[id]); return }
+  // A jog key steps its axis *and* hands that axis to the handwheel, which is the
+  // only way the handle knows what to move.
+  if (AXIS_KEYS[id]) {
+    s.jogAxis = AXIS_KEYS[id][0]
+    jogAxis(...AXIS_KEYS[id])
+    return invalidate()
+  }
 
   switch (id) {
     case 'cycle-start': return cycleStart()
@@ -912,7 +920,10 @@ function jogWheel (dir) {
   // owning its own cursor and this does not have to know about any of them.
   if (hasCursor()) return press(dir > 0 ? 'up' : 'down')
 
-  jogAxis(0, dir)     // the dial jogs the axis the operator has selected; X for now
+  // "This is used to jog axes (select in [HANDLE JOG] Mode)" — the axis is
+  // whichever one the operator last touched with a jog key, which is how the
+  // machine works and what the key press is *for* beyond its own single step.
+  jogAxis(s.jogAxis, dir)
 }
 
 /** Panes with something for the handle to scroll. */

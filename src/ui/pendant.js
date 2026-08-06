@@ -45,6 +45,52 @@ function groupTpl (group, press) {
     </section>`
 }
 
+/**
+ * The handwheel, one detent per graduation on the ring it is drawn with.
+ *
+ * It is a knob, so it turns: grab it and rotate. That is the only affordance a
+ * round control needs, and it was missing — the dial answered a mouse wheel and
+ * nothing else, which is undiscoverable on something that looks like this. The
+ * wheel still works for anyone who finds it.
+ *
+ * Clockwise is positive. `atan2` already grows clockwise in screen coordinates,
+ * where y points down, so no sign to get wrong here.
+ */
+const DETENT = 9        // degrees, matching the graduations drawn on the ring
+
+function turnDial (e, jogWheel) {
+  const box = e.currentTarget.getBoundingClientRect()
+  const cx = box.left + box.width / 2
+  const cy = box.top + box.height / 2
+  const angle = (ev) => Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI
+
+  let last = angle(e)
+  let carry = 0
+
+  // On window, not the dial: a hand that slides off the knob mid-turn should keep
+  // turning it, and should still let go when the button comes up anywhere at all.
+  const move = (ev) => {
+    let step = angle(ev) - last
+    if (step > 180) step -= 360          // across the -180/180 seam
+    if (step < -180) step += 360
+    last += step
+    carry += step
+    while (Math.abs(carry) >= DETENT) {
+      const dir = carry > 0 ? 1 : -1
+      carry -= dir * DETENT
+      jogWheel(dir)
+    }
+  }
+  const up = () => {
+    removeEventListener('pointermove', move)
+    removeEventListener('pointerup', up)
+    removeEventListener('pointercancel', up)
+  }
+  addEventListener('pointermove', move)
+  addEventListener('pointerup', up)
+  addEventListener('pointercancel', up)
+}
+
 /* A stand-in for the roundel badge. Deliberately NOT a copy of the HAAS mark —
    see the note in README about reproducing a trademark on a lookalike. */
 const badge = html`
@@ -79,6 +125,7 @@ export const pendant = (state, actions) => {
 
         <span class="legend">HANDLE JOG</span>
         <div class="dial"
+             @pointerdown=${(e) => { e.preventDefault(); turnDial(e, actions.jogWheel) }}
              @wheel=${(e) => { e.preventDefault(); actions.jogWheel(e.deltaY < 0 ? 1 : -1) }}>
           <i style="transform: rotate(${state.dial}deg)"></i>
         </div>

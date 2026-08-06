@@ -348,6 +348,13 @@ machine. The keypad, the panes and the modes are the
 real layout. The machine underneath is not a HAAS, and
 these are the places that shows:
 
+<span class="k">The handwheel</span>   Grab it and turn, or scroll on it. It moves the
+                axis you last touched with a jog key — the icon
+                bar shows which — by one increment a detent.
+                On a page with a cursor it scrolls that instead,
+                and HANDLE CONTROL FEED or SPINDLE turns it into
+                an override knob at 1% a detent.
+
 <span class="k">Faded keys</span>      ${UNAVAILABLE.size} keys have nothing underneath them on
                 this machine — no chip conveyor, no tool
                 changer, no programmable coolant, and no
@@ -461,7 +468,7 @@ const lit = (s) => html`
     </section>
 
     ${pane('icons', null, html`<pre class="k">${
-      ['INC ' + s.increment, s.shifted && 'SHIFT',
+      ['INC ' + s.increment, 'HANDLE ' + 'XYZA'[s.jogAxis], s.shifted && 'SHIFT',
         s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
         s.blockDelete && 'BLK DEL',
         s.jogLock && (s.latched !== null ? 'JOG LOCK ▶ ' + 'XYZA'[s.latched] : 'JOG LOCK'),
