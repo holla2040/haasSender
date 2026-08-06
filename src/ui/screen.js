@@ -403,7 +403,18 @@ const pane = (id, title, body, active) => html`
     ${body}
   </section>`
 
-export const screen = (s) => html`
+export const screen = (s) => s.powered ? lit(s) : html`<div class="screen off"></div>`
+
+/**
+ * A control with its power off. Not a black rectangle — an unlit LCD is never
+ * quite black, and one that were would read as a broken display rather than a
+ * cold one. The glass is still there; nothing behind it is.
+ *
+ * Deliberately empty. There is no "press POWER ON" prompt because a machine does
+ * not have one: the panel is dark and one button on it is lit green, which is how
+ * anyone has ever worked out how to start a machine tool.
+ */
+const lit = (s) => html`
   <div class="screen">
     <div class="modebar">
       <span>${s.mode}: ${s.fn}</span>

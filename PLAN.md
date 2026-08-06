@@ -254,6 +254,18 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 ## Still open
 
+- [x] **The screen is off when the control is off.** Three states, not two, and
+      they are genuinely different things:
+      *off* — an unlit panel with nothing on it, and every key dead but POWER ON;
+      *on, no link* — `LINK DOWN` with every reading blanked, which is the
+      staleness watchdog;
+      *on and answering* — live.
+      Rendered as cold glass with a faint sheen rather than pure black, because a
+      black rectangle reads as a broken display instead of a switched-off one.
+      There is deliberately no "press POWER ON" prompt: a machine does not have
+      one. The panel is dark and one button on it is lit green, which is how anyone
+      has ever worked out how to start a machine tool.
+
 - [x] **SEND / RECEIVE / DNC — the machine's own SD card.** grblHAL exposes the
       card on the *grbl stream*, which is worth knowing: `$F` lists, `$F<=` dumps a
       file, `$F=` runs one, `$FD=` deletes. So RECEIVE works over any transport,

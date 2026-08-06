@@ -353,6 +353,16 @@ body {
 
 /* --------------------------------------------------------------- the screen */
 
+/* Power off. An unlit LCD is not black — it is cold glass with a faint sheen on
+   it — and one rendered pure black reads as a broken display rather than a
+   switched-off one. Same bezel, same size, nothing behind the glass. */
+.screen.off {
+  display: block;
+  background:
+    linear-gradient(147deg, rgba(255,255,255,.045) 0 22%, transparent 42%),
+    linear-gradient(#0a0d0b, #070908 60%, #0b0e0c);
+}
+
 .screen {
   /* Height is set in units rather than by aspect ratio: the screen's width comes
      from the keyboard below it, and letting a 4:3 ratio drive the height made the

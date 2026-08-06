@@ -54,6 +54,11 @@ lease. It is resolved in this order:
 So local development against a bench board means passing `?board=` once; after
 that the plain URL remembers it.
 
+The control starts **off** — an unlit screen, every key dead but POWER ON — which
+is a different state from a powered control whose link has dropped. That one shows
+`LINK DOWN` and blanks its readings. Both are different again from a control that
+is answering.
+
 **POWER ON opens the only dialog in the app** — transport, machine address and
 file import. Nothing else sits outside the pendant, because a real HAAS has no
 "which machine am I talking to" control and no file picker. POWER OFF drops the

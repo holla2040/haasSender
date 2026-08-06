@@ -35,6 +35,11 @@ const REALTIME = {
 }
 
 const s = {
+  // Is the control switched on at all? Distinct from whether the machine is
+  // answering: a powered control with a dead link shows LINK DOWN and blanked
+  // readouts, but a control that is *off* shows nothing, because an unlit screen
+  // is what a machine with its power off actually looks like.
+  powered: false,
   mode: 'SETUP', fn: 'JOG',
   activePane: 'position',
   // `dtg` is null whenever the running block does not say how far is left — see
@@ -107,6 +112,11 @@ setInterval(() => { if (dirty) paint() }, 60)
 // ------------------------------------------------------------------- dispatch
 
 function press (id) {
+  // A control with its power off does nothing, and says nothing, because there is
+  // no lit screen to say it on. Only POWER ON gets through — which is exactly how
+  // you learn a machine: the panel is dark and one button is not.
+  if (!s.powered && id !== 'power-on') return
+
   // Say why, rather than swallow the press. A key that looks live and does
   // nothing teaches a student that the control is unreliable; one that explains
   // itself teaches them what the machine underneath can actually do.
@@ -261,15 +271,18 @@ function press (id) {
     // POWER ON is where a machine's power lives, so it is where this control's
     // does too: it opens the one dialog that is not part of the pendant.
     case 'power-on':
+      s.powered = true          // the screen lights before anything is connected
       $('power').showModal()
-      return
+      return invalidate()
     case 'power-off':
       link?.disconnect()
       link = null
       streamer?.reset()
+      s.powered = false
       s.job = null; s.cycleStartedAt = null; s.latched = null
       s.link = 'OFFLINE'
-      s.message = 'control powered off'
+      s.message = ''
+      $('power').close()
       $('link').textContent = 'not connected'
       $('link').className = ''
       return invalidate()
@@ -1213,6 +1226,7 @@ async function connect () {
     // ~40 lines at connect and pays for the PARAMETER page, `$13` (which unit
     // `MPos:` arrives in) and `$130`+ (how far a latched jog may run).
     link.send('$$\n')
+    s.powered = true        // a machine that answers is a machine that is on
     $('power').close()      // connected: get out of the way
   } catch (e) {
     $('link').textContent = e.message
@@ -1288,11 +1302,6 @@ const wantedBoard =
   servedFromBoard() ||
   remember.get() ||
   ''
-
-// With the setup strip gone there is no longer a Connect button in view, so a
-// control that comes up dead has to say where the power is. A classroom seat with
-// no board reaches the simulator through the same dialog.
-if (!wantedBoard) s.message = 'press POWER ON to choose a machine'
 
 if (wantedBoard) {
   $('host').value = wantedBoard
