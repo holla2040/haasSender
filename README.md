@@ -15,9 +15,12 @@ Target hardware is the companion [grblhal-clearcore](../grblhal-clearcore) proje
 (Teknic ClearCore, 4-axis XYZA). Reference for the control's layout is the 2014
 Mill Operator's Manual in `reference/`; the pendant photos are in `images/`.
 
-Status: **phase 2 of 6** — transport, protocol and job streaming are verified
-against real hardware, and the pendant shell is built: all eight key groups, the
-thirteen display panes, the three-mode bar, jog, overrides and running a program.
+Status: **phase 3 of 6** — transport, protocol and job streaming are verified
+against real hardware; the pendant shell is built; and Operation mode works end to
+end. A student imports a program, picks it from control memory with LIST PROGRAM,
+sets the run switches and runs it, with the overrides live and the cycle timers
+counting. 36 of the 132 keys do something and are tinted green; 12 are faded
+because this control can never honour them; the rest draw and say so when pressed.
 Offsets, current commands, alarms and on-control editing are phases 4-5.
 
 ## Run it

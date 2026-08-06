@@ -27,14 +27,19 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 ## Where it stands
 
-Phases 1 and 2 are done and pushed. 21 of 132 keys do something.
+Phases 1, 2 and 3 are done and pushed. Of 132 keys: **36 work** (green), **12 can
+never work** on this control (faded), the rest draw and say so when pressed.
 
 | | |
 |---|---|
 | Protocol, streaming, three transports | done, verified against the real board |
 | Pendant chrome, 13-pane screen, mode bar | done |
-| Jog, increments, feed override, spindle M3/M4/M5, RESET | done |
-| Everything else on the keypad | draws, does nothing |
+| Jog, increments, every override byte, spindle, coolant, RESET | done, confirmed on the board |
+| Control memory: LIST / SELECT / ERASE, O-numbers | done |
+| Run switches: SINGLE BLOCK, DRY RUN, OPTION STOP, BLOCK DELETE | done |
+| Timers: this cycle, last cycle, parts | done |
+| Staleness watchdog, inch/metric, three key states | done |
+| Offsets, tool table, alarms, EDIT and MDI | phases 4-6 |
 
 ## The bench
 
