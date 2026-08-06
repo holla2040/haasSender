@@ -196,6 +196,9 @@ export const VERIFIED = new Set([
   // going out as `G10 L2` and coming back through `$#`, in millimetres and in
   // inches — 30 mm stored from inch mode read back as 30.000 mm.
   'page-offset', 'part-zero-set', 'enter',
+  // TOOL OFFSET MEASURE stores the machine Z into the sender's own tool table,
+  // and `G43 H3 Z50.` with T03 measured at -20 left the board at Z30.000
+  'tool-offset-measure',
   // ORIGIN zeroes the sender's own OPERATOR readout; no machine needed
   'zero-origin',
   // modes whose behaviour exists: jogging and running a program

@@ -399,9 +399,11 @@ export function prepare (text) {
  *   `M5` and `M9` are left alone: a switch meant to make the machine safer must
  *   never strip the commands that turn things *off*.
  */
-export function wireProgram (lines, { blockDelete = false, optionStop = false, dryRun = false } = {}) {
+export function wireProgram (lines, { blockDelete = false, optionStop = false, dryRun = false, tools = {} } = {}) {
   const wire = []
   const rows = []
+  const push = (text, row) => { wire.push(text); rows.push(row) }
+
   lines.forEach((l, i) => {
     if (l.del && blockDelete) return
     let t = l.del ? l.text.slice(1).trim() : l.text
@@ -409,10 +411,42 @@ export function wireProgram (lines, { blockDelete = false, optionStop = false, d
     if (dryRun) t = t.replace(/\bM0*[3478]\b/gi, ' ').trim()
     if (!optionStop) t = t.replace(/\bM0*1\b/gi, ' ').trim()
 
+    // `G43 H<n>` — apply tool n's length offset. This board has no tool table at
+    // all (N_TOOLS 0 in its firmware), so the sender owns one and turns the
+    // request into grbl's dynamic form.
+    //
+    // It has to become its own block. A HAAS writes `G43 H1 Z50.` on one line
+    // meaning "apply the offset, then rapid to Z50"; folding the offset into that
+    // same line would put two Z words in one block and grbl answers error:25.
+    if (/\bG43\b(?![.\d])/i.test(t)) {
+      const h = /\bH0*(\d+)\b/i.exec(t)
+      push(`G43.1 Z${Number(tools[h ? Number(h[1]) : 0] ?? 0).toFixed(4)}`, i)
+      t = t.replace(/\bG43\b(?![.\d])/i, ' ').replace(/\bH0*\d+\b/i, ' ').trim()
+    }
+
     t = t.replace(/\s{2,}/g, ' ').trim()
     if (!t) return
-    wire.push(t)
-    rows.push(i)
+    push(t, i)
   })
   return { wire, rows }
+}
+
+/**
+ * How many tools the offset table holds.
+ *
+ * A HAAS mill's table runs to 200. Twenty is what a hobby-class machine with a
+ * manual toolchange will ever use, and twenty rows a student can scroll beats two
+ * hundred they have to page through to find the four that are measured.
+ */
+export const TOOL_COUNT = 20
+
+/** Which tool-length offsets a program asks for, so the control can check it has them. */
+export function toolsUsed (lines) {
+  const used = new Set()
+  for (const l of lines) {
+    if (!/\bG43\b(?![.\d])/i.test(l.text)) continue
+    const h = /\bH0*(\d+)\b/i.exec(l.text)
+    used.add(h ? Number(h[1]) : 0)
+  }
+  return [...used]
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -249,4 +249,34 @@ test('distanceToGo does not mistake a letter inside another word for an axis', (
   // G91.1 is not an axis word either.
   assert.equal(distanceToGo('G17 G40 G49', { mpos: [0, 0, 0, 0] }), null)
   assert.deepEqual(distanceToGo('G53 X10', { mpos: [0, 0, 0, 0] }), [10, 0, 0, 0])
+})
+
+// N_TOOLS 0 on the board, so the sender owns the tool table and turns HAAS
+// `G43 H<n>` into grbl's dynamic `G43.1 Z<length>`. The value is the machine Z
+// recorded by TOOL OFFSET MEASURE, sent as-is — verified on the ClearCore, where
+// `G43.1 Z-10` put -10.000 into both [TLO:] and WCO, and G49 cleared it. No sign
+// flip anywhere, which is one fewer thing to get backwards.
+test('G43 H<n> becomes its own G43.1 block, so the Z words do not collide', () => {
+  const lines = prepare(['G0 X0', 'G43 H1 Z50.', 'G1 Z-2 F100', 'G49'].join('\n'))
+  const { wire, rows } = wireProgram(lines, { tools: { 1: -123.456 } })
+  assert.deepEqual(wire, ['G0 X0', 'G43.1 Z-123.4560', 'Z50.', 'G1 Z-2 F100', 'G49'])
+  // Both halves of the split point back at the line they came from, so the
+  // running-block highlight still lands on the right row.
+  assert.deepEqual(rows, [0, 1, 1, 2, 3])
+})
+
+test('a G43 on its own line leaves no empty block behind', () => {
+  const lines = prepare(['G43 H2', 'G0 Z10'].join('\n'))
+  assert.deepEqual(wireProgram(lines, { tools: { 2: -5 } }).wire, ['G43.1 Z-5.0000', 'G0 Z10'])
+})
+
+test('an unmeasured tool applies no offset, and G43.1 is left alone', () => {
+  const lines = prepare(['G43 H7 Z1', 'G43.1 Z-9'].join('\n'))
+  const { wire } = wireProgram(lines, { tools: {} })
+  assert.deepEqual(wire, ['G43.1 Z0.0000', 'Z1', 'G43.1 Z-9'])
+})
+
+test('toolsUsed reports which offsets a program expects', () => {
+  assert.deepEqual(toolsUsed(prepare(['G43 H1 Z5', 'G0 X1', 'G43 H03 Z5'].join('\n'))), [1, 3])
+  assert.deepEqual(toolsUsed(prepare(['G0 X1', 'G49'].join('\n'))), [])
 })

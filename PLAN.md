@@ -168,16 +168,28 @@ The phase with real design in it. Do this before phase 5.
       cell. It converts: `MPos:` arrives in the report unit and `G10 L2` reads the
       *modal* unit, so in inch mode 30 mm goes out as `1.1811` and reads back as
       30.000 mm. Getting that wrong puts a work zero 25.4× out.
-- [ ] **Tool offsets pane** — a tool table the *sender* owns, because the board has
-      `N_TOOLS 0` and base GRBL has only dynamic TLO. Persist it in browser storage.
-- [ ] **`G43 H<n>` → `G43.1 Z-<offset>`** translation on the outgoing stream, so
-      programs written for a HAAS run on a board with no tool table.
-- [ ] **`[TOOL OFFSET MEASURE]`** — record tool length during setup.
+- [x] **Tool offsets pane** — 20 tools, sender-owned because the board is built with
+      `N_TOOLS 0`, persisted in browser storage. Shares the OFFSET key with the work
+      offsets, which cycles the two pages as the machine's does. A tool that was
+      never measured shows a dash, not a zero.
+- [x] **`G43 H<n>` → `G43.1`** translation, **emitted as its own block**. A HAAS
+      writes `G43 H1 Z50.` on one line; folding the offset into it would put two Z
+      words in one block and grbl answers `error:25`. The split keeps both halves
+      pointing at the same source row so the highlight still lands right.
+      **No sign flip:** the stored number is the machine Z the tip touched at, which
+      is exactly what `G43.1` wants. Measured on the board — `G43.1 Z-10` put
+      `-10.000` into both `[TLO:]` and `WCO`, and `G49` cleared it.
+      Verified end to end: `G43 H3 Z50.` with T03 measured at −20 left the machine
+      at Z30.000, which is 50 − 20 exactly.
+- [x] **`[TOOL OFFSET MEASURE]`** — stores the machine Z where the tip is now.
+      CYCLE START warns when a program asks for a tool nobody measured, rather than
+      quietly applying zero — the one number certain to be wrong.
 - [x] Data entry into the active (white) pane: type a value, `[WRITE/ENTER]`
       commits. `WRITE/ENTER` is context-sensitive — on a data-entry pane it writes
       the cell, anywhere else it is MDI. A value that is not a number is refused
       rather than silently written as zero.
-- [ ] Active Codes pane from `$G` (already parsed), Active Tool, Coolant panes.
+- [x] Active Codes pane from `$G`, Active Tool (the `T` word out of the same modal
+      string — the only place this control can learn it) and Coolant panes.
 - [x] `[ZERO RETURN]` group wired: `ALL` → `$H`, `HOME G28` → `G28`, `SINGLE` asks
       which axis then sends `$H<axis>`, `ORIGIN` zeroes the OPERATOR readout.
       **The homing keys are NOT in `VERIFIED`** and say so when pressed — this board

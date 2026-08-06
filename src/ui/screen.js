@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit-html'
-import { WCS } from '../grbl.js'
+import { WCS, TOOL_COUNT } from '../grbl.js'
 
 // The control display: one fixed layout of thirteen panes, per figure F2.27 and
 // section 2.3.4 of the 2014 Mill Operator's Manual. The panes do not change; what
@@ -43,7 +43,12 @@ const droRow = (label, values, s, unknown = false) => {
     <b>${label}</b>${values.map(v => html`<span>${fmt(v * k, inches, s.stale || unknown)}</span>`)}`
 }
 
-/** The four readouts a HAAS shows on the POSITION page. */
+/**
+ * The four readouts a HAAS shows on the POSITION page.
+ *
+ * DIST TO GO is passed `unknown` when the running block cannot say how far is
+ * left, so it draws dashes rather than a hopeful zero — see distanceToGo().
+ */
 function positionBody (s) {
   const work = s.mpos.map((v, i) => v - s.wco[i])
   return html`
@@ -52,7 +57,6 @@ function positionBody (s) {
       ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), s)}
       ${droRow('WORK ' + s.wcs, work, s)}
       ${droRow('MACHINE', s.mpos, s)}
-      ${/* null when the running block cannot say — dashes, not a hopeful zero */''}
       ${droRow('DIST TO GO', s.dtg ?? [0, 0, 0, 0], s, s.dtg === null)}
     </div>`
 }
@@ -106,7 +110,37 @@ machine rather than the other way round.</span></pre>`
  * Values arrive from `$#` in the machine's report unit and are converted for
  * display exactly as the DRO is, so switching to inches moves these too.
  */
+/**
+ * The TOOL OFFSET page, and the one table on this control the *machine* knows
+ * nothing about. The board's firmware is built with N_TOOLS 0 and base grbl has
+ * only a dynamic offset, so this table lives in the browser and is turned into
+ * `G43.1` on the way out — see wireProgram().
+ *
+ * The stored number is the machine Z where the tip touched, which is what TOOL
+ * OFFSET MEASURE records and exactly what `G43.1` wants. Nothing is negated
+ * anywhere, which is one fewer sign to get backwards.
+ */
+function toolBody (s) {
+  const k = displayScale(s.reportUnits, s.units)
+  const inches = s.units === 'IN'
+  const from = Math.max(0, Math.min(s.toolRow - 5, TOOL_COUNT - 12))
+  return html`<pre>  TOOL     LENGTH (Z)
+${Array.from({ length: 12 }, (_, i) => {
+    const n = from + i + 1
+    const v = s.tools[n]
+    return html`<div>  T${String(n).padStart(2, '0')}  ${
+      n === s.tool ? '*' : ' '}${('          ' + (v === undefined
+        ? '—'
+        : fmt(v * k, inches, s.stale))).slice(-11)}</div>`
+  })}
+<span class="dim">TOOL OFFSET MEASURE stores the machine Z where the tip
+is now. A dash means never measured, and a G43 naming
+that tool applies no offset at all — rarely what a
+program that asked for one meant.</span></pre>`
+}
+
 function offsetBody (s) {
+  if (s.offsetPage === 'tool') return toolBody(s)
   const k = displayScale(s.reportUnits, s.units)
   const inches = s.units === 'IN'
   return html`<pre>          ${AXES.map(a => ('       ' + a).slice(-9)).join('')}
@@ -150,7 +184,6 @@ const MAIN_TITLE = {
   position: 'POSITION',
   program: 'PROGRAM',
   list: 'LIST PROGRAM',
-  offset: 'OFFSET',
   current: 'CURRENT COMMANDS',
   alarms: 'ALARMS',
   param: 'PARAMETER / DIAGNOSTIC',
@@ -164,6 +197,12 @@ const PLACEHOLDER = {
   param: 'PARAMETER / DIAGNOSTIC',
   help: 'HELP'
 }
+
+/** OFFSET is two pages behind one key, so its title has to say which one. */
+const mainTitle = (s) =>
+  s.activePane === 'offset'
+    ? (s.offsetPage === 'tool' ? 'TOOL OFFSET' : 'WORK OFFSET')
+    : (MAIN_TITLE[s.activePane] ?? '')
 
 function mainBody (s) {
   if (s.activePane === 'position') return positionBody(s)
@@ -198,7 +237,7 @@ export const screen = (s) => html`
     ${pane('coolant', 'COOLANT', html`
       <pre class=${s.stale ? 'dim' : s.coolant ? 'k' : 'dim'}>${s.stale ? '—' : s.coolant ? 'ON' : 'OFF'}</pre>`, false)}
 
-    ${pane('main', MAIN_TITLE[s.activePane] ?? '', mainBody(s), s.activePane !== 'program')}
+    ${pane('main', mainTitle(s), mainBody(s), s.activePane !== 'program')}
 
     ${pane('spindle', 'MAIN SPINDLE', html`
       <pre><span class="dim">RPM</span> ${s.stale ? '—' : Math.round(s.spindle)}

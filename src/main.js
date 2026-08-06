@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
@@ -62,8 +62,10 @@ const s = {
   // throttled background tab cannot make a cycle look shorter than it was.
   cycleStartedAt: null, cycleMs: 0, lastCycleMs: 0, parts: 0,
   // The work offsets, keyed by the name `$#` reports them under, and the cell the
-  // OFFSET page's cursor is on.
+  // OFFSET page's cursor is on. `tools` is the one table the machine knows nothing
+  // about — the board is built with N_TOOLS 0, so this control owns it.
   offsets: {}, offsetRow: 0, offsetCol: 0,
+  offsetPage: 'work', tools: {}, toolRow: 0,
   dial: 0
 }
 
@@ -98,6 +100,12 @@ function press (id) {
   // Mode keys — three modes only, per T2.11.
   if (MODES[id]) { Object.assign(s, MODES[id]); return invalidate() }
 
+  // OFFSET carries two pages, as it does on the machine, and the key cycles them.
+  if (id === 'page-offset' && s.activePane === 'offset') {
+    s.offsetPage = s.offsetPage === 'work' ? 'tool' : 'work'
+    return invalidate()
+  }
+
   // Display keys move the white highlight; they do not change mode.
   if (DISPLAY_PANES[id]) { s.activePane = DISPLAY_PANES[id]; return invalidate() }
 
@@ -107,8 +115,20 @@ function press (id) {
     return send(s.units === 'IN' ? 'G21' : 'G20')
   }
 
+  // TOOL OFFSET: one column, so the cursor only walks rows.
+  if (s.activePane === 'offset' && s.offsetPage === 'tool') {
+    const dr = { up: -1, down: 1, 'page-up': -10, 'page-down': 10 }[id]
+    if (dr !== undefined) {
+      s.toolRow = Math.max(0, Math.min(TOOL_COUNT - 1, s.toolRow + dr))
+      return invalidate()
+    }
+    if (id === 'home') { s.toolRow = 0; return invalidate() }
+    if (id === 'end') { s.toolRow = TOOL_COUNT - 1; return invalidate() }
+    if (id === 'tool-offset-measure') return toolOffsetMeasure()
+  }
+
   // OFFSET: the cursor walks a grid of cells, one per axis per coordinate system.
-  if (s.activePane === 'offset') {
+  if (s.activePane === 'offset' && s.offsetPage === 'work') {
     const dr = { up: -1, down: 1, 'page-up': -5, 'page-down': 5 }[id]
     const dc = { left: -1, right: 1 }[id]
     if (dr !== undefined) {
@@ -167,10 +187,13 @@ function press (id) {
     case 'spindle-ccw': return send('M4 S1000')
     case 'spindle-stop': return send('M5')
 
+    // Both are handled above when their page is up. Anywhere else there is no cell
+    // to write, so say where they work rather than do nothing.
     case 'part-zero-set':
-      // Handled above when the OFFSET page is up. Anywhere else there is no cell
-      // to write, so say where it works rather than do nothing.
-      s.message = 'press OFFSET first — PART ZERO SET writes into the offset page'
+      s.message = 'press OFFSET first — PART ZERO SET writes into the work offset page'
+      return invalidate()
+    case 'tool-offset-measure':
+      s.message = 'press OFFSET twice first — TOOL OFFSET MEASURE writes into the tool table'
       return invalidate()
 
     case 'select-program': return selectProgram()
@@ -274,6 +297,36 @@ function partZeroSet () {
   writeOffset(s.mpos[s.offsetCol] * k)
 }
 
+// ------------------------------------------------------------------ tool table
+
+const TOOLS = 'haassender.tools'
+
+/** Returns false when the table could not be persisted; the caller must say so. */
+const saveTools = () => store.set(TOOLS, s.tools)
+
+/** One message for both ways of writing a tool length, storage failure included. */
+const toolWritten = (n, shown, persisted) => {
+  s.message = (persisted ? '' : 'NOT STORED (browser storage refused) — ') +
+    `T${String(n).padStart(2, '0')} length set to ${shown.toFixed(4)}`
+  invalidate()
+}
+
+/**
+ * TOOL OFFSET MEASURE — record where this tool's tip is.
+ *
+ * The operator jogs the tip down to the reference surface and presses this. What
+ * gets stored is the machine Z, unconverted and un-negated, because that is
+ * exactly the number `G43.1` wants: with the work Z offset at zero, `G43.1 Z<m>`
+ * makes work Z read zero at machine Z = m. Verified on the board, where
+ * `G43.1 Z-10` put -10.000 into both `[TLO:]` and `WCO`.
+ */
+function toolOffsetMeasure () {
+  if (s.stale) { s.message = 'no position from the machine — cannot measure'; return invalidate() }
+  const n = s.toolRow + 1
+  s.tools = { ...s.tools, [n]: s.mpos[2] }
+  toolWritten(n, s.mpos[2] * displayScale(s.reportUnits, s.units), saveTools())
+}
+
 // ------------------------------------------------------------- the run switches
 
 /**
@@ -372,7 +425,12 @@ function commitInput () {
   const v = s.input.trim()
 
   if (s.activePane === 'offset') {
-    if (!v) { s.message = 'type a value first, or press PART ZERO SET'; return invalidate() }
+    if (!v) {
+      s.message = s.offsetPage === 'tool'
+        ? 'type a length first, or press TOOL OFFSET MEASURE'
+        : 'type a value first, or press PART ZERO SET'
+      return invalidate()
+    }
     // A control that quietly writes zero because the operator typed "12x" is
     // worse than one that refuses. Offsets move the machine's idea of the part.
     if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(v)) {
@@ -380,6 +438,13 @@ function commitInput () {
       return invalidate()
     }
     s.input = ''
+    if (s.offsetPage === 'tool') {
+      const n = s.toolRow + 1
+      // Typed in the displayed unit; stored in the machine's, like everything else
+      // in this table, so `G43.1` can use it without a second conversion.
+      s.tools = { ...s.tools, [n]: Number(v) * displayScale(s.units, s.reportUnits) }
+      return toolWritten(n, Number(v), saveTools())
+    }
     return writeOffset(Number(v))
   }
 
@@ -462,6 +527,14 @@ function cycleStart () {
     return invalidate()
   }
 
+  // A program that asks for a tool offset nobody measured gets zero, which is the
+  // one number certain to be wrong. Run anyway — refusing would be worse on a
+  // machine with no tools fitted — but never let it happen quietly.
+  const unmeasured = toolsUsed(s.program.lines).filter(n => n > 0 && s.tools[n] === undefined)
+  if (unmeasured.length) {
+    s.message = `no tool length measured for ${unmeasured.map(n => 'H' + n).join(', ')} — running with no offset`
+  }
+
   s.alarm = null
   s.mode = 'OPERATION'; s.fn = 'MEM'
   s.activePane = 'program'
@@ -531,6 +604,10 @@ function onLine (line) {
     s.units = /\bG20\b/.test(fb.value) ? 'IN' : 'MM'
     const wcs = fb.value.match(/G5[4-9](\.\d)?/)
     if (wcs) s.wcs = wcs[0]
+    // The modal string carries the selected tool, which is the only place this
+    // control can learn it — the board has no tool table to ask.
+    const t = fb.value.match(/\bT(\d+)/)
+    if (t) s.tool = Number(t[1])
   } else if (fb.kind === 'TLO') {
     s.tlo = fb.value[2] ?? 0
   } else if (/^G5[4-9](\.[1-3])?$/.test(fb.kind)) {
@@ -589,7 +666,10 @@ function applyStatus (st) {
     s.lastCycleMs = s.cycleMs
     s.parts++
     s.cycleStartedAt = null
-    link?.send('$G\n')      // the program may have left the modal state elsewhere
+    // A program can leave the modal state, the work offsets and the tool length
+    // offset anywhere at all. Re-read rather than assume they survived the cycle.
+    link?.send('$G\n')
+    link?.send('$#\n')
   }
   // Only when the machine actually told us. grblHAL leaves `A:` out of most
   // reports and refreshes it every so often — measured on the board, flood stayed
@@ -693,6 +773,11 @@ const remember = {
 // Control memory. A HAAS keeps programs on the control, filed by O-number, and
 // LIST PROGRAM is how an operator picks one — so the browser's storage is the
 // nearest honest equivalent to the control's memory.
+const loadedTools = store.get(TOOLS, {})
+s.tools = (loadedTools && typeof loadedTools === 'object' && !Array.isArray(loadedTools))
+  ? Object.fromEntries(Object.entries(loadedTools).filter(([, v]) => Number.isFinite(v)))
+  : {}
+
 const PROGRAMS = 'haassender.programs'
 // Whatever comes out of storage is untrusted — a half-written value, or a
 // different version's format. Anything that is not a list of entries is no
