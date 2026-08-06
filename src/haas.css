@@ -381,27 +381,46 @@ body {
    Scoped to this pane on purpose: the big DRO on the POSITION page is untouched. */
 .pane-position { padding-left: 0; padding-right: 0; }
 .pane-position h3 { padding-left: calc(var(--u) * .45); }
-.pane-position .dro.wide {
-  /* Every pixel inside the pane goes to the numbers: no label column, no side
-     padding, no column gaps. The pane's own width is unchanged. */
+
+/* X value  Y value  Z value  A value, on one line, top aligned.
+   Width is what limits this, not height — four eight-character readings plus
+   their letters is 40 characters across a 781px pane, so the type size is
+   whatever divides into that, and taking the header row away bought height the
+   readout could not spend. Every pixel inside the pane goes to the digits: no
+   side padding, no column gaps, the letter as small as stays legible. */
+.pane-position .axisrow {
+  display: grid;
   grid-template-columns: repeat(4, 1fr);
-  column-gap: 0;
-  align-content: center; height: 100%; row-gap: 0;
+  column-gap: calc(var(--u) * .35);
+  align-content: start;          /* top aligned, as asked */
+  height: 100%;
 }
-/* 2.8u = 39.2px, which is the largest that still fits EIGHT characters in the
-   192px cell — "-200.000", which this machine can genuinely show, its travel
-   being 200mm. 50% larger (44px) would fit only seven, so a move to the end of
-   the table would clip. Sized for the worst value that can appear, not the ones
-   on screen while someone is looking. */
-.pane-position .dro span { font-size: calc(var(--u) * 2.8); line-height: 1.05; }
-/* Four headers, not five: the label column is gone, so -n+5 was catching the
-   first value and rendering X at full size and the X reading at label size. */
-.pane-position .dro > span:nth-child(-n+4) {   /* the X Y Z A header row */
-  font-size: calc(var(--u) * .72);
-  line-height: 1;
-  text-align: center;      /* a column header, not a right-aligned number */
+/* The letter hugs its own number rather than sitting at the left of the cell.
+   With the number right-aligned and the letter pinned left, "40.000" and the
+   next "Y" ended up touching and read as one token. Keeping the pair together
+   puts the slack on the left of each group, which separates them for free. */
+.pane-position .axisrow > div {
+  display: flex; align-items: flex-start; justify-content: flex-end;
+  gap: calc(var(--u) * .15);
+  min-width: 0;
 }
-.pane-position .dro b { font-size: calc(var(--u) * .72); align-self: center; }
+.pane-position .axisrow i {
+  font-style: normal;
+  font-size: calc(var(--u) * .8);
+  line-height: 1;              /* so flex-start puts its cap at the top, not its box */
+  color: var(--screen-dim);
+  flex: none;
+}
+.pane-position .axisrow span {
+  flex: none; text-align: right;
+  /* The largest that fits "-200.000" in what is left of the cell after the axis
+     letter and the gap between groups. Height would allow ~59px; width is what
+     stops it — four eight-character readings and their letters across 781px. */
+  font-size: calc(var(--u) * 2.6);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.pane.active .axisrow i { color: #4d6b54; }
 
 /* --------------------------------------------------------------- the screen */
 

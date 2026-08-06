@@ -257,24 +257,21 @@ The fiddliest behaviour in the project. Budget accordingly.
 - [x] **The always-visible POSITION strip is deliberately not HAAS-sized.** On the
       machine it matches everything around it; here it is the one readout an
       operator watches continuously while jogging, and it was 12.32px in a pane
-      carrying 30px of unused space. The values are 29.4px now — 2.4× — at the same
-      pane height, paid for out of that slack plus the axis-letter row, which
-      became a small centred label rather than a line of its own. Sized so the
-      widest value that can appear still fits.
-      **39.2px, 3.2× the original**, with the pane's own width and height both
-      unchanged: the room came from inside it — the WORK label column (which moved
-      into the pane title as `POSITION G54`), the side padding and the column gaps,
-      giving 192px a cell instead of 178.
-      **Sized for eight characters, not for what is on screen.** `-200.000` is
-      189px of the 192 available, and this machine's travel is 200mm so it can
-      genuinely show that. 50% larger again — 44px — fits only seven characters,
-      so a move to the end of the table would clip. The measured ceilings are
-      45.5px for 7 characters, 39.75px for 8, 35.25px for 9.
+      carrying 30px of unused space.
+      Laid out as `X value  Y value  Z value  A value` on one line, top aligned,
+      each letter kept with its own number so the slack falls between the groups
+      and separates them. **36.4px, 3× the original**, at the same pane width and
+      height — the room came from inside: the label column moved into the pane
+      title (`POSITION G54`), and the side padding and column gaps went to zero.
+      **Sized for the widest value that can appear, not the ones on screen.**
+      `-200.000` is 175px of the 180 available and this machine's travel is 200mm,
+      so it can genuinely show that. **Width is the limit here, not height** —
+      four eight-character readings and their letters across 781px. Height would
+      allow about 59px. Doubling the type would need the pane twice as wide.
       The big DRO on the POSITION page is untouched, as asked — except that it was
       **clipping DIST TO GO by 23px**, a regression from the 1080p height cut that
       the first overflow check missed. Fixed by leading alone (1.5 → 1.22); the
       numbers are the size they always were.
-
 - [x] **HELP pages with PAGE UP / PAGE DOWN**, as a control's manual does. Length
       stopped being the constraint the moment it could scroll, so the text cut
       twice to fit 1080 is back and fuller than it ever was — 42 lines, ten at a

@@ -463,15 +463,14 @@ const lit = (s) => html`
       <pre><span class="dim">RPM</span> ${s.stale ? '—' : Math.round(s.spindle)}
 <span class="dim">DIR</span> ${s.stale || !s.spindleDir ? '—' : s.spindleDir > 0 ? 'FWD' : 'REV'}</pre>`, false)}
 
-    ${/* Its own markup rather than droRow(): no label column, so all four values
-          get the full width of the pane. Which system it is moves into the title,
-          where it costs nothing. */''}
+    ${/* One line: X value  Y value  Z value  A value, top aligned. The axis
+          letter sits with its own number rather than in a header row above, so
+          the row is the whole pane and the digits get all the height there is. */''}
     ${pane('position', 'POSITION ' + s.wcs, html`
-      <div class="dro wide">
-        ${AXES.map(a => html`<span class="dim">${a}</span>`)}
-        ${s.mpos.map((v, i) => html`<span>${fmt(
-          (v - s.wco[i]) * displayScale(s.reportUnits, s.units),
-          s.units === 'IN', s.stale)}</span>`)}
+      <div class="axisrow">
+        ${AXES.map((a, i) => html`<div><i>${a}</i><span>${fmt(
+          (s.mpos[i] - s.wco[i]) * displayScale(s.reportUnits, s.units),
+          s.units === 'IN', s.stale)}</span></div>`)}
       </div>`, false)}
 
     ${pane('timers', 'TIMERS', html`
