@@ -258,6 +258,22 @@ function press (id) {
     case 'dry-run': return toggleSwitch('dryRun', 'DRY RUN')
     case 'single-block': return toggleSwitch('singleBlock', 'SINGLE BLOCK')
 
+    // POWER ON is where a machine's power lives, so it is where this control's
+    // does too: it opens the one dialog that is not part of the pendant.
+    case 'power-on':
+      $('power').showModal()
+      return
+    case 'power-off':
+      link?.disconnect()
+      link = null
+      streamer?.reset()
+      s.job = null; s.cycleStartedAt = null; s.latched = null
+      s.link = 'OFFLINE'
+      s.message = 'control powered off'
+      $('link').textContent = 'not connected'
+      $('link').className = ''
+      return invalidate()
+
     case 'jog-lock':
       s.jogLock = !s.jogLock
       // Turning the lock off with a move latched would leave the machine running
@@ -1197,6 +1213,7 @@ async function connect () {
     // ~40 lines at connect and pays for the PARAMETER page, `$13` (which unit
     // `MPos:` arrives in) and `$130`+ (how far a latched jog may run).
     link.send('$$\n')
+    $('power').close()      // connected: get out of the way
   } catch (e) {
     $('link').textContent = e.message
     $('link').className = 'bad'
@@ -1272,6 +1289,11 @@ const wantedBoard =
   remember.get() ||
   ''
 
+// With the setup strip gone there is no longer a Connect button in view, so a
+// control that comes up dead has to say where the power is. A classroom seat with
+// no board reaches the simulator through the same dialog.
+if (!wantedBoard) s.message = 'press POWER ON to choose a machine'
+
 if (wantedBoard) {
   $('host').value = wantedBoard
   $('kind').value = 'websocket'
@@ -1282,15 +1304,17 @@ if (wantedBoard) {
 }
 
 $('connect').onclick = connect
-// The dev strip's file input is now an import into control memory, not a way to
-// run a job: a student picks the program with LIST PROGRAM like they would on the
-// machine. This is the only step of the workflow that has no pendant equivalent,
-// because a real HAAS reads its USB port and a browser cannot.
+// Importing from *this computer* into control memory. It is the one step of the
+// workflow with no pendant equivalent — a real HAAS reads a USB stick and a
+// browser cannot — which is why it sits in the power dialog with the other things
+// that are not really part of the machine. Getting a program off the machine's own
+// card is RECEIVE, and putting one back is SEND; both are on the pendant.
 $('file').onchange = async (e) => {
   const f = e.target.files[0]
   if (!f) return
   storeProgram(f.name, await f.text())
   e.target.value = ''          // so re-importing the same file fires change again
+  $('power').close()
 }
 
 // Physical keyboard shortcuts for the keys a student uses constantly.

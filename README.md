@@ -54,6 +54,12 @@ lease. It is resolved in this order:
 So local development against a bench board means passing `?board=` once; after
 that the plain URL remembers it.
 
+**POWER ON opens the only dialog in the app** — transport, machine address and
+file import. Nothing else sits outside the pendant, because a real HAAS has no
+"which machine am I talking to" control and no file picker. POWER OFF drops the
+link, and the staleness watchdog blanks the readouts as it would for any other
+lost connection.
+
 ## Transports
 
 | | Notes |

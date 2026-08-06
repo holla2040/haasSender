@@ -7,37 +7,66 @@
 { "imports": { "lit-html": "/node_modules/lit-html/lit-html.js" } }
 </script>
 <style>
-  /* The setup strip is deliberately not part of the pendant — a real HAAS has no
-     "which machine am I talking to" control, so it stays visually outside. */
-  .setup {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
-    display: flex; gap: .5rem; align-items: center;
-    padding: .3rem .6rem; background: #16191d; color: #9fb3a6;
-    font: 12px/1.4 ui-monospace, monospace;
+  /* Nothing outside the pendant any more. A real HAAS has no "which machine am I
+     talking to" control and no file picker, so both live behind POWER ON — which
+     is where a machine's power lives anyway.
+
+     Native <dialog>: modal, focus-trapped, dismissable with Escape, and none of
+     that written by hand. */
+  #power {
+    border: 1px solid #39424a; border-radius: 4px; padding: 0;
+    background: #16191d; color: #9fb3a6;
+    font: 13px/1.6 ui-monospace, monospace;
+    box-shadow: 0 1rem 3rem rgba(0,0,0,.6);
   }
-  .setup select, .setup input, .setup button {
+  #power::backdrop { background: rgba(0,0,0,.55); }
+  #power form { display: grid; gap: .7rem; padding: 1.1rem 1.3rem; min-width: 24rem; }
+  #power h2 {
+    margin: 0; font-size: 12px; letter-spacing: .18em; color: #7fd39b;
+    text-transform: uppercase; font-weight: 400;
+  }
+  #power hr { border: none; border-top: 1px solid #2a3138; margin: .2rem 0; width: 100%; }
+  #power label { display: grid; grid-template-columns: 6.5rem 1fr; align-items: center; gap: .6rem; }
+  #power select, #power input, #power button {
     font: inherit; background: #21262b; color: #d6e4da;
-    border: 1px solid #39424a; padding: .15rem .4rem;
+    border: 1px solid #39424a; padding: .25rem .45rem;
   }
-  .setup button { cursor: pointer; }
-  .setup .spacer { flex: 1; }
-  .setup .ok { color: #7fd39b; }
-  .setup .bad { color: #e06c75; }
-  body { padding-top: 2rem; }
+  #power button { cursor: pointer; }
+  #power .row { display: flex; gap: .5rem; justify-content: flex-end; }
+  #power .note { color: #6d7d84; font-size: 11px; }
+  #power .ok { color: #7fd39b; }
+  #power .bad { color: #e06c75; }
 </style>
 
-<div class="setup">
-  <select id="kind">
-    <option value="sim">Simulator</option>
-    <option value="websocket">WebSocket</option>
-    <option value="serial">USB serial</option>
-  </select>
-  <input id="host" placeholder="board address" size="16">
-  <button id="connect">Connect</button>
-  <span id="link">not connected</span>
-  <span class="spacer"></span>
-  <label><input type="file" id="file" accept=".nc,.gcode,.tap,.txt" style="width:15rem"></label>
-</div>
+<dialog id="power">
+  <form method="dialog">
+    <h2>Control power on</h2>
+
+    <label>Machine
+      <select id="kind">
+        <option value="sim">Simulator</option>
+        <option value="websocket">WebSocket</option>
+        <option value="serial">USB serial</option>
+      </select>
+    </label>
+    <label>Address <input id="host" placeholder="board address" size="16"></label>
+    <span id="link">not connected</span>
+    <span class="note">The simulator needs no hardware. USB serial needs Chrome or
+      Edge on localhost.</span>
+
+    <hr>
+
+    <label>Import <input type="file" id="file" accept=".nc,.gcode,.tap,.txt"></label>
+    <span class="note">Reads a file from this computer into control memory. The
+      machine's own card is reached from the pendant with RECEIVE, and SEND writes
+      back to it.</span>
+
+    <div class="row">
+      <button id="connect" type="button">Connect</button>
+      <button value="close">Close</button>
+    </div>
+  </form>
+</dialog>
 
 <main id="app"></main>
 

@@ -29,7 +29,10 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 All six phases are done except one item that needs a person at the bench. Of 132
 keys: **112 work**, **13 can never work** on this control, **7 are not built
-yet**. All thirteen display pages are real.
+yet** — and separately, all five round pushbuttons work. All thirteen display
+pages are real, and **nothing sits outside the pendant any more**: the transport
+picker, the machine address and the file import all live behind POWER ON, which
+is where a machine's power lives.
 
 The seven unbuilt: POWER UP RESTART, F1-F4, and ZERO RETURN's ALL and SINGLE
 (homing, untestable without limit switches).
