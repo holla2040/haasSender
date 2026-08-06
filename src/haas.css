@@ -410,12 +410,32 @@ body {
   color: var(--screen-dim);
   flex: none;
 }
+/* The digits are as tall as the pane's own height allows — the limit is the 62px
+   of row height, not the cell width, because the glyphs are narrowed to fit.
+   Eight characters at 58.1px is 280px of natural advance against a 212px cell, so
+   they run at 72% width. Two details make that safe rather than clever:
+
+   - the box keeps its natural 8ch width so the text still fills it, and a negative
+     left margin takes back exactly what the scale gives up. That is what keeps
+     layout and paint agreeing. Sizing the box to the scaled width instead does
+     not work: text-align only moves text when there is *spare* room, so text too
+     wide for its box starts at the left edge and spills right into the next axis.
+   - the scale is anchored to the right edge, which is the edge a DRO aligns on.
+
+   --sx is the knob. Toward 1 gives rounder digits and a smaller readout; the
+   font-size then has to come down to match, since width is what runs out first. */
 .pane-position .axisrow span {
-  flex: none; text-align: right;
-  /* The largest that fits "-200.000" in what is left of the cell after the axis
-     letter and the gap between groups. Height would allow ~59px; width is what
-     stops it — four eight-character readings and their letters across 781px. */
-  font-size: calc(var(--u) * 2.6);
+  --sx: .72;
+  flex: none;
+  display: inline-block;
+  width: 8ch;                                  /* "-500.000", the widest reading */
+  margin-left: calc(8ch * (var(--sx) - 1));    /* what scaleX gives up, taken back */
+  text-align: right;
+  transform: scaleX(var(--sx));
+  transform-origin: 100% 50%;
+  /* 4.2 would fit the row but pushes the pane 0.2px past its neighbours, and the
+     whole point was to spend the height already there. */
+  font-size: calc(var(--u) * 4.15);
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
 }
@@ -454,7 +474,12 @@ body {
   color: var(--screen-text);
   display: grid;
   gap: calc(var(--u) * .25);
-  grid-template-columns: 1.15fr 1fr .8fr .55fr;
+  /* Column 1 (program, spindle, icons) narrowed twice: once to 90% of its
+     original 1.15fr, then again to buy width for the POSITION readout, which is
+     width-bound and spans columns 2 and 3. The exchange rate is poor — column 1
+     gives up 100px to make the digits ~4px taller — so this is as far as it goes
+     before the program listing stops holding a full g-code block. */
+  grid-template-columns: .77fr 1fr .8fr .55fr;
   grid-template-rows: auto auto 1fr auto auto auto;
   grid-template-areas:
     "modebar modebar modebar modebar"
