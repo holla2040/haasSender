@@ -1,9 +1,9 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale } from './ui/screen.js'
-import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
+import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
@@ -71,7 +71,7 @@ const s = {
   editRow: 0, editWord: 0, undoStack: [],
   // MDI keeps what it ran, so an error can be shown against the block that caused
   // it rather than on its own.
-  mdi: [],
+  mdi: [], alarms: [], shifted: false,
   dial: 0
 }
 
@@ -250,6 +250,7 @@ function press (id) {
       s.input = ''
       s.pendingHomeAxis = false
       return invalidate()
+    case 'shift': s.shifted = !s.shifted; return invalidate()
     case 'enter': return commitInput()
     case 'space': s.input += ' '; return invalidate()
   }
@@ -268,6 +269,9 @@ function press (id) {
 }
 
 function typedChar (id) {
+  // SHIFT reaches the yellow legend above the key, and is one-shot like the real
+  // one. `$` lives above the 5, which is the only way to type `$X` or `$H` here.
+  if (s.shifted && SHIFTED[id]) { s.shifted = false; return SHIFTED[id] }
   if (id.startsWith('alpha-')) return id.slice(6).toUpperCase()
   if (id.startsWith('num-')) return id.slice(4)
   if (id === 'minus') return '-'
@@ -315,9 +319,26 @@ function partZeroSet () {
   writeOffset(s.mpos[s.offsetCol] * k)
 }
 
+// --------------------------------------------------------------------- alarms
+
+/**
+ * Keep what went wrong, newest first, so the ALARMS page has something to show.
+ * The same fault repeating four times a second while a machine sits in Alarm is
+ * one event, not four, so a repeat of the head of the list is folded into it.
+ */
+function logAlarm (kind, code, text, recovery) {
+  const head = s.alarms[0]
+  if (head && head.kind === kind && head.code === code) return
+  s.alarms = [{ kind, code, text, recovery }, ...s.alarms].slice(0, 20)
+}
+
 // ------------------------------------------------------------------ EDIT mode
 
-const editing = () => s.mode === 'EDIT' && s.fn === 'EDIT' && s.program.lines.length > 0
+// EDIT mode *and* the program on screen. An operator who has paged away to
+// POSITION should not be editing a program they cannot see.
+const editing = () =>
+  s.mode === 'EDIT' && s.fn === 'EDIT' &&
+  s.activePane === 'program' && s.program.lines.length > 0
 const editLine = () => s.program.lines[s.editRow]
 
 /** Clamp the cursor after the program under it has changed shape. */
@@ -707,6 +728,7 @@ function onLine (line) {
   if (line.startsWith('ALARM:')) {
     const n = Number(line.slice(6))
     s.alarm = `ALARM ${n} — ${describeAlarm(n)}`
+    logAlarm('ALARM', n, describeAlarm(n), describeRecovery(n))
     return invalidate()
   }
   if (line.startsWith('error:')) {
@@ -716,6 +738,7 @@ function onLine (line) {
     // learns far more from "G1 X10 — needs a feed rate" than from the code alone.
     const last = s.mdi[s.mdi.length - 1]
     if (last && !last.error) last.error = `error ${n}: ${describeError(n)}`
+    logAlarm('ERROR', n, describeError(n), null)
     return invalidate()
   }
 

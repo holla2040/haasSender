@@ -19,9 +19,9 @@ Status: **phase 5 of 6** — the whole operator workflow runs. A student imports
 program, picks it from control memory with LIST PROGRAM, sets work offsets and
 tool lengths on the OFFSET pages, edits blocks word by word in EDIT, types blocks
 in MDI, and runs the job with the run switches, overrides and cycle timers live.
-98 of the 132 keys work and are tinted green; 12 are faded because this control
-can never honour them; the rest draw and say so when pressed. Remaining: the
-alarms pane, and Web Serial against real USB hardware.
+100 of the 132 keys work and are tinted green; 12 are faded because this control
+can never honour them; the rest draw and say so when pressed. The one thing left
+is Web Serial against real USB hardware, which has never been plugged in.
 
 ## Run it
 

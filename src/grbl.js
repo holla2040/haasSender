@@ -204,6 +204,32 @@ export const ALARMS = {
 export const describeError = (n) => ERRORS[n] || `Unrecognized error ${n}.`
 export const describeAlarm = (n) => ALARMS[n] || `Unrecognized alarm ${n}.`
 
+/**
+ * What actually clears each alarm, which is the half a student needs and the half
+ * the grbl tables never print.
+ *
+ * The control says what to do; it does not do it. `$X` re-enables motion on a
+ * machine whose position may be wrong — after a hard limit or a reset in motion,
+ * the controller genuinely does not know where the tool is — and a trainer that
+ * quietly unlocked for you would be teaching exactly the wrong reflex. A HAAS
+ * makes you clear the condition before RESET means anything, and so does this.
+ */
+export const ALARM_RECOVERY = {
+  1: 'Move off the switch by hand, then $X to unlock and $H to re-establish position.',
+  2: 'The target was outside machine travel, so nothing moved. $X to unlock, then fix the block or the work offset.',
+  3: 'Position is not trustworthy after a reset in motion. $X to unlock, then $H.',
+  4: 'Check the probe wiring and its starting state, then $X.',
+  5: 'The probe never touched. Check the travel and the probe, then $X.',
+  6: 'Homing was interrupted. $X, then $H to start again.',
+  7: 'Close the safety door, then $X and $H.',
+  8: 'The axis could not pull off its switch. Check the switch and $22 pull-off, then $H.',
+  9: 'No limit switch found within the search distance. Check wiring and $23 direction mask, then $H.',
+  10: 'The second switch on a dual axis was not found. Check that motor and switch, then $H.'
+}
+
+export const describeRecovery = (n) =>
+  ALARM_RECOVERY[n] || 'Clear the cause, then $X to unlock. $H re-establishes position.'
+
 // -------------------------------------------------------------------- streaming
 
 /**

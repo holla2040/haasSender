@@ -27,7 +27,7 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 ## Where it stands
 
-Phases 1 through 5 are done and pushed. Of 132 keys: **98 work** (green), **12 can
+Phases 1 through 5 are done and pushed, and phase 6 all but the USB check. Of 132 keys: **100 work** (green), **12 can
 never work** on this control (faded), the rest draw and say so when pressed.
 
 | | |
@@ -42,7 +42,8 @@ never work** on this control (faded), the rest draw and say so when pressed.
 | Work offsets, PART ZERO SET, data entry | done, `G10 L2` P-numbers measured |
 | Sender-owned tool table, `G43 H` → `G43.1` | done, verified on the board |
 | EDIT word cursor, INSERT/ALTER/DELETE/UNDO, MDI | done |
-| Alarms pane, Web Serial on real hardware | phase 6 |
+| Alarms pane with causes and recovery, SHIFT for `$` | done |
+| Web Serial against a real USB board | **never tested — needs a board plugged in** |
 
 ## The bench
 
@@ -238,8 +239,20 @@ The fiddliest behaviour in the project. Budget accordingly.
 - [ ] **Web Serial against real hardware** — the code path exists and has had a bug
       fixed by inspection, but no USB board has ever been plugged in. ClearCore
       enumerates as `2890:8022`.
-- [ ] Alarms pane: map `ALARM:N` / `error:N` to HAAS-style alarm text, showing both
-      the grbl code and the plain-English cause. Good teaching value.
+- [x] Alarms pane: a history, newest first, with the grbl code, the plain-English
+      cause **and what clears it** — the half the grbl tables never print. Repeats
+      of the same fault fold into one entry, since a machine sitting in Alarm
+      re-reports it four times a second.
+      **No invented HAAS alarm numbers.** A student at a real HAAS reads `102 SERVO
+      OVERLOAD`; this machine has no such code and making one up would teach a
+      number that does not exist.
+      **It does not clear the alarm for you.** `$X` re-enables motion on a machine
+      whose position may be wrong, and a trainer that quietly unlocked would teach
+      exactly the wrong reflex. It says what to type.
+- [x] **SHIFT reaches the yellow legends**, which is how `$` is typed at all — it
+      lives above the 5. Without it there was no way to enter `$X` to clear an
+      alarm, or any other `$` command, from the pendant. Built from the key
+      definitions so the panel and the keyboard cannot drift apart.
 
 ---
 

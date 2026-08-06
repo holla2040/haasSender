@@ -166,6 +166,21 @@ export const NUMERIC = {
 export const GROUPS = { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, NUMERIC }
 
 /**
+ * The small yellow characters printed above some keys, reached with SHIFT.
+ *
+ * Taken from the key definitions rather than written out again, so the panel and
+ * the keyboard cannot drift apart. This matters more here than on a real HAAS:
+ * `$` is SHIFT+5, and without it there is no way to type `$X` to clear an alarm
+ * or `$H` to home from the pendant at all.
+ */
+export const SHIFTED = Object.fromEntries(
+  Object.values(GROUPS)
+    .flatMap(g => g.rows.flat())
+    .filter(k => k.id && k.sup)
+    .map(k => [k.id, k.sup])
+)
+
+/**
  * Keys that actually work, drawn with a green tint so it is obvious at a glance
  * what is real and what is still just a legend on a button.
  *
@@ -243,7 +258,13 @@ export const VERIFIED = new Set([
   // the words EDIT inserts were all typed with these.
   ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(c => 'alpha-' + c.toLowerCase()),
   ...'0123456789'.split('').map(d => 'num-' + d),
-  'minus', 'dot', 'space', 'cancel', 'semicolon', 'paren-open', 'paren-close'
+  'minus', 'dot', 'space', 'cancel', 'semicolon', 'paren-open', 'paren-close',
+  // SHIFT reaches the yellow legend above a key. Watched typing `$X` — SHIFT then
+  // 5 then X — to clear a soft-limit alarm, which is the only way to reach `$` on
+  // this keypad at all.
+  'shift',
+  // ALARMS shows the history with the cause and the recovery
+  'page-alarms'
 ])
 
 /**

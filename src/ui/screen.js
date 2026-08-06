@@ -190,6 +190,28 @@ function mdiBody (s) {
 <span class="k">&gt; ${s.input}_</span></pre>`
 }
 
+/**
+ * The ALARMS page: what went wrong, in the machine's own numbers and in English,
+ * newest first, with what clears it.
+ *
+ * Deliberately not dressed up with invented HAAS alarm numbers. A student sitting
+ * at a real HAAS will read "102 SERVO OVERLOAD"; this machine has no such code
+ * and making one up would teach a number that does not exist. What it can honestly
+ * give is the grbl code, the cause and the recovery — which is more than the
+ * machine itself prints.
+ */
+function alarmBody (s) {
+  if (!s.alarms.length) {
+    return html`<pre class="dim">no alarms since power-up
+
+An ALARM stops the machine and locks out
+g-code until it is cleared. An error rejects
+one block and halts the program.</pre>`
+  }
+  return html`<pre>${s.alarms.map(a => html`<div><span class="k">${a.kind} ${a.code}</span>  ${a.text}</div>
+<div class="dim">      ${a.recovery ?? ''}</div>`)}</pre>`
+}
+
 /** Control memory: what LIST PROGRAM shows, filed by O-number. */
 function listBody (s) {
   if (!s.programs.length) {
@@ -225,7 +247,6 @@ const MAIN_TITLE = {
 
 const PLACEHOLDER = {
   current: 'CURRENT COMMANDS — phase 4',
-  alarms: 'ALARMS — phase 4',
   param: 'PARAMETER / DIAGNOSTIC',
   help: 'HELP'
 }
@@ -242,6 +263,7 @@ function mainBody (s) {
   if (s.activePane === 'setting') return settingBody(s)
   if (s.activePane === 'list') return listBody(s)
   if (s.activePane === 'mdi') return mdiBody(s)
+  if (s.activePane === 'alarms') return alarmBody(s)
   if (s.activePane === 'offset') return offsetBody(s)
   return html`<pre class="dim">${PLACEHOLDER[s.activePane] ?? ''}</pre>`
 }
@@ -299,7 +321,7 @@ export const screen = (s) => html`
     </section>
 
     ${pane('icons', null, html`<pre class="k">${
-      ['INC ' + s.increment,
+      ['INC ' + s.increment, s.shifted && 'SHIFT',
         s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
         s.blockDelete && 'BLK DEL', s.jogLock && 'JOG LOCK'].filter(Boolean).join('   ')
     }</pre>`, false)}
