@@ -508,6 +508,16 @@ body {
 }
 .pane pre { margin: 0; font: inherit; white-space: pre; overflow: hidden; }
 
+/* RPM and DIR at twice the screen's text size, for the same reason the position
+   strip beside them is big: they are watched from a pace away, not read up close.
+   Two lines at 24.6px is 61.6px of the pane's 62px, so this spends slack that was
+   already there rather than pushing the row taller.
+
+   Has to sit after `.pane pre`, not with the other pane rules above: the two
+   selectors have equal specificity and `font: inherit` is a shorthand, so it
+   resets font-size and the later rule wins. */
+.pane-spindle pre { font-size: calc(var(--u) * 1.76); }
+
 /* "The currently active pane has a white background. You can work with data in a
    pane only when that pane is active." — 2014 manual, 2.3.4 */
 .pane.active { background: #f2f5f2; color: #10160f; }
