@@ -400,14 +400,13 @@ body {
    next "Y" ended up touching and read as one token. Keeping the pair together
    puts the slack on the left of each group, which separates them for free. */
 .pane-position .axisrow > div {
-  display: flex; align-items: flex-start; justify-content: flex-end;
+  display: flex; align-items: baseline; justify-content: flex-end;
   gap: calc(var(--u) * .15);
   min-width: 0;
 }
 .pane-position .axisrow i {
   font-style: normal;
   font-size: calc(var(--u) * .8);
-  line-height: 1;              /* so flex-start puts its cap at the top, not its box */
   color: var(--screen-dim);
   flex: none;
 }
