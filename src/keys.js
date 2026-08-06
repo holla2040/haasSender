@@ -193,6 +193,9 @@ export const VERIFIED = new Set([
   'page-setting',
   // modes whose behaviour exists: jogging and running a program
   'mode-jog', 'mode-memory',
+  // control memory — observed importing, filing by O-number, selecting and
+  // erasing, and running the selected program on the real board
+  'mode-list', 'select-program', 'erase-program',
   // handle-jog increments — observed changing the step and the resulting move
   'inc-0001', 'inc-001', 'inc-01', 'inc-1',
   // linear jog, $J= confirmed against both the simulator and the real board
@@ -254,7 +257,9 @@ export const MODES = {
   'mode-jog': { mode: 'SETUP', fn: 'JOG' },
   'mode-edit': { mode: 'EDIT', fn: 'EDIT' },
   'mode-mdi': { mode: 'EDIT', fn: 'MDI' },
-  'mode-list': { mode: 'EDIT', fn: 'LIST' },
+  // LIST PROGRAM shows control memory in the main display, so selecting the mode
+  // and selecting the pane are the same act.
+  'mode-list': { mode: 'EDIT', fn: 'LIST', activePane: 'list' },
   'mode-memory': { mode: 'OPERATION', fn: 'MEM' }
 }
 

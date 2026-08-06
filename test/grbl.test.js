@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare } from '../src/grbl.js'
+import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -42,20 +42,42 @@ test('rxBufferFromOpt pulls the buffer size out of the real $I option string', (
   assert.equal(rxBufferFromOpt('garbage'), null)
 })
 
-test('prepare strips comments, blanks and block-deletes but keeps line numbers', () => {
-  const got = prepare([
-    'G21 G90        ',
-    '',
-    '(SETUP: X<0 SIDE)',
-    'G1 X10 (move) Y20',
-    '/G0 Z50',
-    'M30 ; end'
-  ].join('\n'))
-  assert.deepEqual(got, [
-    { n: 1, text: 'G21 G90' },
-    { n: 4, text: 'G1 X10  Y20' },
-    { n: 6, text: 'M30' }
+const TAPE = [
+  '%',
+  'O1234 (FACE THE TOP)',
+  'G21 G90        ',
+  '',
+  '(SETUP: X<0 SIDE)',
+  'G1 X10 (move) Y20',
+  '/G0 Z50',
+  'M30 ; end',
+  '%'
+].join('\n')
+
+test('prepare strips comments, blanks, the tape wrapper and the O-number', () => {
+  assert.deepEqual(prepare(TAPE), [
+    { n: 3, text: 'G21 G90' },
+    { n: 6, text: 'G1 X10  Y20' },
+    { n: 7, text: 'G0 Z50' },      // block delete is OFF, so the slash line runs
+    { n: 8, text: 'M30' }
   ])
+})
+
+// The switch is off at power-up on a real machine, so a `/` block runs unless the
+// operator says otherwise. Dropping them unconditionally is that switch jammed on.
+test('BLOCK DELETE decides whether a slashed block runs', () => {
+  const on = prepare(TAPE, { blockDelete: true })
+  assert.equal(on.some(l => l.text === 'G0 Z50'), false)
+  assert.equal(prepare(TAPE).some(l => l.text === 'G0 Z50'), true)
+})
+
+test('parseONumber finds the program name, and admits when there is none', () => {
+  assert.equal(parseONumber(TAPE), 'O01234')
+  assert.equal(parseONumber('O5\nG0 X0'), 'O00005')
+  assert.equal(parseONumber('\n\n%\n  o42 \nG0'), 'O00042')
+  // A CAM post that never expected control memory. Do not invent a number.
+  assert.equal(parseONumber('G21 G90\nG0 X0'), null)
+  assert.equal(parseONumber('(O1234 IS IN A COMMENT)\nG0'), null)
 })
 
 // --------------------------------------------------------------- the real check

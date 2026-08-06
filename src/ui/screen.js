@@ -50,10 +50,10 @@ function positionBody (s) {
 
 function programBody (s) {
   if (!s.program.lines.length) {
-    return html`<pre class="dim">no program in memory
+    return html`<pre class="dim">no program selected
 
-Load a file, or press
-LIST PROGRAM.</pre>`
+Press LIST PROGRAM, highlight
+one, then SELECT PROGRAM.</pre>`
   }
   // Window the listing around the running block rather than rendering thousands
   // of lines; the pane only shows a dozen or so anyway.
@@ -84,9 +84,31 @@ G21 changes it too — this pane follows the
 machine rather than the other way round.</span></pre>`
 }
 
+/** Control memory: what LIST PROGRAM shows, filed by O-number. */
+function listBody (s) {
+  if (!s.programs.length) {
+    return html`<pre class="dim">control memory is empty
+
+Import a file with the picker above the
+pendant. It is filed by the O-number on
+its first line.</pre>`
+  }
+  const from = Math.max(0, Math.min(s.listIndex - 6, s.programs.length - 14))
+  return html`<pre>${s.programs.slice(from, from + 14).map((p, i) => {
+    const at = from + i
+    return html`<div class=${at === s.listIndex ? 'cur' : ''}>${p.o}   ${
+      p.o === s.program.o ? '*' : ' '} ${p.name}</div>`
+  })}
+
+<span class="dim">* is the selected program. SELECT PROGRAM
+loads the highlighted one, ERASE PROGRAM
+removes it.</span></pre>`
+}
+
 const MAIN_TITLE = {
   position: 'POSITION',
   program: 'PROGRAM',
+  list: 'LIST PROGRAM',
   offset: 'OFFSET',
   current: 'CURRENT COMMANDS',
   alarms: 'ALARMS',
@@ -107,6 +129,7 @@ function mainBody (s) {
   if (s.activePane === 'position') return positionBody(s)
   if (s.activePane === 'program') return programBody(s)
   if (s.activePane === 'setting') return settingBody(s)
+  if (s.activePane === 'list') return listBody(s)
   return html`<pre class="dim">${PLACEHOLDER[s.activePane] ?? ''}</pre>`
 }
 

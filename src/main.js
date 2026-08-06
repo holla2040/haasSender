@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, describeAlarm, describeError } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
@@ -47,7 +47,10 @@ const s = {
   ov: { feed: 100, rapid: 100, spindle: 100 },
   tool: 0, tlo: 0, coolant: false, jogLock: false,
   alarm: null, message: '', input: '',
-  program: { name: '', lines: [], current: 0 },
+  // Control memory: the program directory, filed by O-number the way a HAAS files
+  // it, and whichever one is currently selected to run.
+  programs: [], listIndex: 0, blockDelete: false,
+  program: { o: '', name: '', lines: [], current: 0 },
   job: null, plannerSize: 100,
   dial: 0
 }
@@ -91,6 +94,15 @@ function press (id) {
     return send(s.units === 'IN' ? 'G21' : 'G20')
   }
 
+  // LIST PROGRAM: the cursor walks control memory.
+  if (s.activePane === 'list' && s.programs.length) {
+    const move = { up: -1, down: 1, 'page-up': -8, 'page-down': 8, home: -1e9, end: 1e9 }[id]
+    if (move !== undefined) {
+      s.listIndex = Math.max(0, Math.min(s.programs.length - 1, s.listIndex + move))
+      return invalidate()
+    }
+  }
+
   const incAt = INCREMENT_KEYS.indexOf(id)
   if (incAt >= 0) { s.incIndex = incAt; return invalidate() }
 
@@ -112,6 +124,9 @@ function press (id) {
     case 'spindle-cw': return send('M3 S1000')
     case 'spindle-ccw': return send('M4 S1000')
     case 'spindle-stop': return send('M5')
+
+    case 'select-program': return selectProgram()
+    case 'erase-program': return eraseProgram()
 
     case 'jog-lock': s.jogLock = !s.jogLock; return invalidate()
     case 'zero-all': return send('$H')
@@ -136,6 +151,82 @@ function typedChar (id) {
   if (id === 'paren-open') return '('
   if (id === 'paren-close') return ')'
   return null
+}
+
+// -------------------------------------------------------- the program directory
+
+const selected = () => s.programs[s.listIndex] ?? null
+
+/** Lowest unused O-number, for a file that arrived without one. */
+function nextFreeONumber () {
+  const used = new Set(s.programs.map(p => p.o))
+  for (let n = 1; n < 100000; n++) {
+    const o = 'O' + String(n).padStart(5, '0')
+    if (!used.has(o)) return o
+  }
+  return null
+}
+
+/** Returns false when the directory could not be persisted; the caller must say so. */
+const saveDirectory = () => store.set(PROGRAMS, s.programs)
+
+/** Import a file into control memory, filed under its O-number. */
+function storeProgram (name, text) {
+  const found = parseONumber(text)
+  const o = found ?? nextFreeONumber()
+  if (!o) { s.message = 'control memory is full'; return invalidate() }
+
+  const at = s.programs.findIndex(p => p.o === o)
+  const entry = { o, name, text }
+  if (at >= 0) s.programs[at] = entry
+  else s.programs.push(entry)
+  s.programs.sort((a, b) => a.o.localeCompare(b.o))
+  s.listIndex = s.programs.findIndex(p => p.o === o)
+  const persisted = saveDirectory()
+
+  s.mode = 'EDIT'; s.fn = 'LIST'; s.activePane = 'list'
+  selectProgram()
+
+  // One message carrying everything the operator needs, set last because
+  // selectProgram writes its own. Two things must not get lost here: that we
+  // invented the O-number when the file had none, and that storage refused —
+  // a program that vanishes on reload without warning is worse than one that
+  // never claimed to be saved.
+  s.message =
+    (persisted ? '' : 'NOT STORED (browser storage refused) — ') +
+    (found ? `${name} filed as ${o}` : `${name} had no O-number, filed as ${o}`) +
+    `, ${s.program.lines.length} blocks`
+  invalidate()
+}
+
+/** Make the highlighted directory entry the program CYCLE START will run. */
+function selectProgram () {
+  const p = selected()
+  if (!p) { s.message = 'no program to select'; return invalidate() }
+  s.program = {
+    o: p.o,
+    name: p.name,
+    lines: prepare(p.text, { blockDelete: s.blockDelete }),
+    current: 0
+  }
+  s.message = `${p.o} selected — ${s.program.lines.length} blocks`
+  invalidate()
+}
+
+function eraseProgram () {
+  const p = selected()
+  if (!p) { s.message = 'no program to erase'; return invalidate() }
+  if (s.job) { s.message = 'cannot erase while a program is running'; return invalidate() }
+
+  s.programs.splice(s.listIndex, 1)
+  s.listIndex = Math.max(0, Math.min(s.listIndex, s.programs.length - 1))
+  const persisted = saveDirectory()
+
+  // Erasing the program that is loaded has to unload it too, or CYCLE START would
+  // run something the operator has just deleted from the directory.
+  if (s.program.o === p.o) s.program = { o: '', name: '', lines: [], current: 0 }
+  s.message = persisted ? `${p.o} erased` : `${p.o} erased, but browser storage refused — it will be back on reload`
+  invalidate()
 }
 
 function commitInput () {
@@ -176,7 +267,10 @@ function cycleStart () {
   if (streamer && !streamer.done && streamer.total && !streamer.running) {
     return link?.sendRealtime(0x7E)     // resume from a hold
   }
-  if (!s.program.lines.length) { s.message = 'no program in memory'; return invalidate() }
+  if (!s.program.lines.length) {
+    s.message = 'no program selected — press LIST PROGRAM, then SELECT PROGRAM'
+    return invalidate()
+  }
   s.alarm = null
   s.mode = 'OPERATION'; s.fn = 'MEM'
   s.activePane = 'program'
@@ -344,11 +438,35 @@ setInterval(() => {
 // localStorage throws rather than returning null when storage is blocked — some
 // embedded and file:// contexts do that. At module scope an uncaught throw here
 // means a blank page instead of a control, so it is never worth the risk.
+const store = {
+  get: (key, fallback) => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw === null ? fallback : JSON.parse(raw)
+    } catch { return fallback }            // blocked, or somebody else's format
+  },
+  set: (key, value) => {
+    try { localStorage.setItem(key, JSON.stringify(value)); return true } catch { return false }
+  }
+}
+
 const REMEMBERED = 'haassender.board'
 const remember = {
-  get: () => { try { return localStorage.getItem(REMEMBERED) } catch { return null } },
-  set: (v) => { try { localStorage.setItem(REMEMBERED, v) } catch { /* not fatal */ } }
+  get: () => store.get(REMEMBERED, null),
+  set: (v) => store.set(REMEMBERED, v)
 }
+
+// Control memory. A HAAS keeps programs on the control, filed by O-number, and
+// LIST PROGRAM is how an operator picks one — so the browser's storage is the
+// nearest honest equivalent to the control's memory.
+const PROGRAMS = 'haassender.programs'
+// Whatever comes out of storage is untrusted — a half-written value, or a
+// different version's format. Anything that is not a list of entries is no
+// directory at all, and the rest of the app must not have to check.
+const loadedPrograms = store.get(PROGRAMS, [])
+s.programs = Array.isArray(loadedPrograms)
+  ? loadedPrograms.filter(p => p && typeof p.o === 'string' && typeof p.text === 'string')
+  : []
 
 const wantedBoard =
   new URLSearchParams(location.search).get('board') ||
@@ -366,13 +484,15 @@ if (wantedBoard) {
 }
 
 $('connect').onclick = connect
+// The dev strip's file input is now an import into control memory, not a way to
+// run a job: a student picks the program with LIST PROGRAM like they would on the
+// machine. This is the only step of the workflow that has no pendant equivalent,
+// because a real HAAS reads its USB port and a browser cannot.
 $('file').onchange = async (e) => {
   const f = e.target.files[0]
   if (!f) return
-  s.program = { name: f.name, lines: prepare(await f.text()), current: 0 }
-  s.activePane = 'program'
-  s.message = `loaded ${f.name} (${s.program.lines.length} lines)`
-  invalidate()
+  storeProgram(f.name, await f.text())
+  e.target.value = ''          // so re-importing the same file fires change again
 }
 
 // Physical keyboard shortcuts for the keys a student uses constantly.

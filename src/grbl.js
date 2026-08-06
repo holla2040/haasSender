@@ -241,11 +241,31 @@ export class Streamer {
 }
 
 /**
- * Strip a raw g-code file down to the lines worth sending: no blanks, no comments,
- * no block-delete lines. Keeps the original 1-based line number alongside each so
- * the program pane can highlight the right row.
+ * A HAAS names a program by the O-number on its first meaningful line — `O1234`,
+ * displayed and filed as five digits. The `%` that wraps a tape-format file is
+ * not it, and neither is a leading comment.
+ *
+ * Returns null when there is no O-number, which is a normal thing for a file cut
+ * by a CAM post that never expected to live in control memory. The caller decides
+ * what to call it then; it must not invent one here and pretend it was in the file.
  */
-export function prepare (text) {
+export function parseONumber (text) {
+  const first = text.split(/\r?\n/).find(l => l.trim() && l.trim() !== '%')
+  const m = first?.trim().match(/^O\s*(\d{1,5})\b/i)
+  return m ? 'O' + m[1].padStart(5, '0') : null
+}
+
+/**
+ * Strip a raw g-code file down to the lines worth sending. Keeps the original
+ * 1-based line number alongside each so the program pane can highlight the right
+ * row even though blank and comment lines are gone.
+ *
+ * `blockDelete` is the front-panel switch, and it is off by default because that
+ * is how a machine starts: a `/`-prefixed block RUNS unless the operator has
+ * turned BLOCK DELETE on. Dropping them unconditionally — which this did — is the
+ * switch jammed on, and it silently skips blocks the programmer meant to run.
+ */
+export function prepare (text, { blockDelete = false } = {}) {
   const out = []
   const raw = text.split(/\r?\n/)
   for (let i = 0; i < raw.length; i++) {
@@ -253,7 +273,19 @@ export function prepare (text) {
     line = line.replace(/\([^)]*\)/g, '')   // (inline comments)
     line = line.replace(/;.*$/, '')          // ; trailing comments
     line = line.trim()
-    if (!line || line[0] === '/') continue   // blank, or block-delete
+    if (!line) continue
+
+    if (line[0] === '/') {
+      if (blockDelete) continue             // switch on: skip the block
+      line = line.slice(1).trim()           // switch off: run it, without the slash
+      if (!line) continue
+    }
+
+    // Tape-format wrapper, and the program's own O-number. Neither is a command:
+    // grbl has no use for `%`, and a bare `O1234` is a HAAS program name that a
+    // grbl parser will answer with error:20.
+    if (line === '%' || /^O\s*\d{1,5}\b\s*$/i.test(line)) continue
+
     out.push({ n: i + 1, text: line })
   }
   return out

@@ -102,16 +102,25 @@ Small, no design risk, and the first one is a correctness-of-information bug.
 Ends when a student can pick a program from control memory and run it without
 touching anything that is not on the pendant.
 
-- [ ] **`[LIST PROGRAM]`** — program directory stored by O-number in browser
-      storage. This replaces the dev-strip file picker as the way a job is chosen.
-- [ ] `[SELECT PROGRAM]` sets the active program; `[ERASE PROGRAM]` removes one.
-- [ ] O-number parsing: `O1234` on the first line names the program.
+- [x] **`[LIST PROGRAM]`** — control memory, filed by O-number in browser storage
+      and shown in the main display, cursor keys walking it. The file picker is now
+      an *import* into that directory rather than the way a job is chosen; picking
+      one is done on the pendant.
+- [x] `[SELECT PROGRAM]` sets the active program; `[ERASE PROGRAM]` removes one,
+      refuses while a job is running, and unloads it if it was the selected one.
+- [x] O-number parsing: `O1234` on the first line names the program, filed as five
+      digits. A file without one is given the lowest free number and the control
+      says so rather than pretending it was in the file. `prepare()` now strips the
+      `%` tape wrapper and the O-number line — grbl answers a bare `O1234` with
+      `error:20`. Verified running a directory program on the board.
 - [ ] **`[SINGLE BLOCK]`** — run one block per CYCLE START. Needs the streamer to
       hold at one line in flight rather than filling the buffer.
 - [ ] **`[DRY RUN]`** — run without spindle or coolant.
 - [ ] **`[OPTION STOP]`** — honour `M01`.
-- [ ] **`[BLOCK DELETE]`** — skip `/`-prefixed lines. `prepare()` in `grbl.js`
-      currently drops them unconditionally; make it conditional.
+- [ ] **`[BLOCK DELETE]`** — the key. `prepare()` is already conditional and
+      defaults to *off*, which is how a machine starts: a `/` block runs unless the
+      operator turns the switch on. It used to drop them unconditionally — the
+      switch jammed on, silently skipping blocks the programmer meant to run.
 - [ ] Timers pane: cycle time, last cycle, parts counter.
 - [ ] **Manual sends during a running job corrupt flow control.** Pre-existing, and
       found while wiring the `$G` refresh: the streamer credits every `ok` it sees
