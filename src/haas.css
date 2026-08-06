@@ -447,3 +447,5 @@ body {
 
 /* the running block, highlighted from Ln: in the status report */
 .cur { background: var(--screen-key); color: #10160f; }
+/* a block BLOCK DELETE will skip — shown, not hidden, so the switch is visible */
+.skipped { opacity: .38; }

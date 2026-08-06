@@ -60,7 +60,12 @@ one, then SELECT PROGRAM.</pre>`
   const cur = Math.max(0, s.program.current - 1)
   const from = Math.max(0, cur - 4)
   const slice = s.program.lines.slice(from, from + 16)
-  return html`<pre>${slice.map((l, i) => html`<div class=${from + i === cur ? 'cur' : ''}>${l.text}</div>`)}</pre>`
+  // The listing always shows the file as written, slashes and all. BLOCK DELETE
+  // greys the blocks it will skip rather than hiding them — a student needs to
+  // see what the switch is doing to the program in front of them.
+  return html`<pre>${slice.map((l, i) => html`<div
+    class=${(from + i === cur ? 'cur' : '') + (l.del && s.blockDelete ? ' skipped' : '')}
+    >${l.text}</div>`)}</pre>`
 }
 
 /**
@@ -183,7 +188,10 @@ export const screen = (s) => html`
       <pre>${s.alarm ?? 'NO ALARM'}</pre>
     </section>
 
-    ${pane('icons', null, html`<pre class="dim">${s.jogLock ? 'LOCK' : ''}</pre>`, false)}
+    ${pane('icons', null, html`<pre class="k">${
+      [s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
+        s.blockDelete && 'BLK DEL', s.jogLock && 'JOG LOCK'].filter(Boolean).join('   ')
+    }</pre>`, false)}
 
     ${pane('input', null, html`<pre>${s.input ? '> ' + s.input : ''}<span class="k">${s.input ? '_' : ''}</span></pre>`, false)}
   </div>`

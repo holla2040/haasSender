@@ -196,6 +196,11 @@ export const VERIFIED = new Set([
   // control memory — observed importing, filing by O-number, selecting and
   // erasing, and running the selected program on the real board
   'mode-list', 'select-program', 'erase-program',
+  // the run switches, each watched changing what reached the board: BLOCK DELETE
+  // greying and skipping a `/` block, DRY RUN dropping M3/M8, OPTION STOP taking
+  // the machine to Hold:0 on M01 and CYCLE START resuming it, SINGLE BLOCK
+  // stepping one source block per press
+  'block-delete', 'dry-run', 'option-stop', 'single-block',
   // handle-jog increments — observed changing the step and the resulting move
   'inc-0001', 'inc-001', 'inc-01', 'inc-1',
   // linear jog, $J= confirmed against both the simulator and the real board

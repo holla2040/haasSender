@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, describeAlarm, describeError } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
@@ -49,7 +49,10 @@ const s = {
   alarm: null, message: '', input: '',
   // Control memory: the program directory, filed by O-number the way a HAAS files
   // it, and whichever one is currently selected to run.
-  programs: [], listIndex: 0, blockDelete: false,
+  programs: [], listIndex: 0,
+  // The four front-panel run switches. They are the sender's, not the machine's:
+  // grbl has no optional-stop switch and no dry run, so this control owns them.
+  blockDelete: false, optionStop: false, dryRun: false, singleBlock: false,
   program: { o: '', name: '', lines: [], current: 0 },
   job: null, plannerSize: 100,
   dial: 0
@@ -115,7 +118,10 @@ function press (id) {
     case 'feed-hold': return link?.sendRealtime(0x21)
     case 'reset': case 'estop':
       link?.sendRealtime(0x18)
-      streamer?.stop()
+      // Forget the job, do not merely pause it. Leaving the old line list in the
+      // streamer made the next CYCLE START look like a resume — it sent a cycle
+      // byte to a machine with nothing queued and never started the program.
+      streamer?.reset()
       s.job = null
       s.alarm = id === 'estop' ? 'EMERGENCY STOP (software)' : null
       s.message = id === 'estop' ? 'this is not a hardware E-stop' : ''
@@ -127,6 +133,11 @@ function press (id) {
 
     case 'select-program': return selectProgram()
     case 'erase-program': return eraseProgram()
+
+    case 'block-delete': return toggleSwitch('blockDelete', 'BLOCK DELETE')
+    case 'option-stop': return toggleSwitch('optionStop', 'OPTION STOP')
+    case 'dry-run': return toggleSwitch('dryRun', 'DRY RUN')
+    case 'single-block': return toggleSwitch('singleBlock', 'SINGLE BLOCK')
 
     case 'jog-lock': s.jogLock = !s.jogLock; return invalidate()
     case 'zero-all': return send('$H')
@@ -151,6 +162,22 @@ function typedChar (id) {
   if (id === 'paren-open') return '('
   if (id === 'paren-close') return ')'
   return null
+}
+
+// ------------------------------------------------------------- the run switches
+
+/**
+ * These change what goes on the wire, so they take effect at the next CYCLE
+ * START, not in the middle of a program: the blocks after the tool are already
+ * in the controller's planner and cannot be recalled. Say so rather than let an
+ * operator believe a switch they just pressed applies to the cut in progress.
+ */
+function toggleSwitch (key, label) {
+  s[key] = !s[key]
+  if (key === 'singleBlock' && streamer) streamer.singleBlock = s.singleBlock
+  s.message = `${label} ${s[key] ? 'ON' : 'OFF'}` +
+    (s.job && key !== 'singleBlock' ? ' — takes effect at the next CYCLE START' : '')
+  return invalidate()
 }
 
 // -------------------------------------------------------- the program directory
@@ -203,12 +230,7 @@ function storeProgram (name, text) {
 function selectProgram () {
   const p = selected()
   if (!p) { s.message = 'no program to select'; return invalidate() }
-  s.program = {
-    o: p.o,
-    name: p.name,
-    lines: prepare(p.text, { blockDelete: s.blockDelete }),
-    current: 0
-  }
+  s.program = { o: p.o, name: p.name, lines: prepare(p.text), current: 0 }
   s.message = `${p.o} selected — ${s.program.lines.length} blocks`
   invalidate()
 }
@@ -264,18 +286,59 @@ function jogWheel (dir) {
 }
 
 function cycleStart () {
-  if (streamer && !streamer.done && streamer.total && !streamer.running) {
-    return link?.sendRealtime(0x7E)     // resume from a hold
+  // The machine is holding — from FEED HOLD, or from an M00/M01 the program ran
+  // into. CYCLE START continues it, and that is the whole point of OPTION STOP:
+  // the program stops, the operator looks at the part, the operator restarts.
+  // This has to come first. A hold raised by M01 mid-program leaves the streamer
+  // running, so every check below would miss it and the machine would sit held
+  // while CYCLE START appeared to do nothing.
+  if (/^Hold/.test(s.machineState)) {
+    s.message = 'resuming'
+    link?.sendRealtime(0x7E)
+    return invalidate()
   }
+
+  // Mid-cycle. In SINGLE BLOCK this is the key that steps to the next block;
+  // otherwise it does nothing at all. It must not fall through to the code below
+  // and restart the program from the top with the tool still in the cut.
+  if (s.job && streamer?.running) {
+    if (s.singleBlock) {
+      // One press, one block — and the block has to finish first. grbl acks on
+      // buffering, not on execution, so releasing on the ack alone would let a
+      // quick second press drop two blocks into the planner and run them straight
+      // through, which is exactly the pause SINGLE BLOCK exists to provide.
+      if (/^(Run|Jog|Home)/.test(s.machineState)) {
+        s.message = 'block still running'
+        return invalidate()
+      }
+      streamer.release()
+      return invalidate()
+    }
+    s.message = 'already running'
+    return invalidate()
+  }
+
   if (!s.program.lines.length) {
     s.message = 'no program selected — press LIST PROGRAM, then SELECT PROGRAM'
     return invalidate()
   }
+
+  // Build the wire program now, so the switches read at CYCLE START are the ones
+  // that govern the whole cycle. `rows` keeps the running-block highlight pointing
+  // at the source line, which a switch that removes blocks would otherwise skew.
+  const { wire, rows } = wireProgram(s.program.lines, s)
+  if (!wire.length) {
+    s.message = 'every block is switched out — nothing to run'
+    return invalidate()
+  }
+
   s.alarm = null
   s.mode = 'OPERATION'; s.fn = 'MEM'
   s.activePane = 'program'
-  s.job = { sentAll: false }
-  streamer.start(s.program.lines.map(l => l.text))
+  s.job = { sentAll: false, rows }
+  streamer.singleBlock = s.singleBlock
+  streamer.start(wire)
+  if (s.singleBlock) streamer.release()
   invalidate()
 }
 
@@ -356,7 +419,10 @@ function applyStatus (st) {
   // source lines, unless the program carries N words.)
   if (s.job && st.bf && s.plannerSize) {
     const queued = Math.max(0, s.plannerSize - st.bf.blocks)
-    s.program.current = Math.max(0, streamer.acked - queued)
+    const wireAt = Math.max(0, streamer.acked - queued)
+    // ...and back to the source row, because the run switches may have removed
+    // blocks between the listing and the wire.
+    s.program.current = wireAt > 0 ? (s.job.rows[wireAt - 1] ?? 0) + 1 : 0
   }
 
   if (s.job?.sentAll && st.state === 'Idle') {

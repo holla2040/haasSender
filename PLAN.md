@@ -113,14 +113,26 @@ touching anything that is not on the pendant.
       says so rather than pretending it was in the file. `prepare()` now strips the
       `%` tape wrapper and the O-number line — grbl answers a bare `O1234` with
       `error:20`. Verified running a directory program on the board.
-- [ ] **`[SINGLE BLOCK]`** — run one block per CYCLE START. Needs the streamer to
-      hold at one line in flight rather than filling the buffer.
-- [ ] **`[DRY RUN]`** — run without spindle or coolant.
-- [ ] **`[OPTION STOP]`** — honour `M01`.
-- [ ] **`[BLOCK DELETE]`** — the key. `prepare()` is already conditional and
-      defaults to *off*, which is how a machine starts: a `/` block runs unless the
-      operator turns the switch on. It used to drop them unconditionally — the
-      switch jammed on, silently skipping blocks the programmer meant to run.
+- [x] **The four run switches.** All sender-owned — grbl has no optional stop and
+      no dry run — applied by `wireProgram()` at CYCLE START, so the switches that
+      govern a cycle are the ones set when it started. The listing always shows the
+      file as written; only the wire changes. Active switches show in the icon bar.
+      - **`[SINGLE BLOCK]`** one block per CYCLE START. The streamer holds at one
+        line in flight, and the release also waits for the machine to leave `Run` —
+        grbl acks on *buffering*, so releasing on the ack alone let a quick second
+        press chain two blocks into the planner and run straight through them.
+      - **`[DRY RUN]`** strips `M3`/`M4`/`M7`/`M8`. Never `M5`/`M9`: a switch meant
+        to make the machine safer must not remove the commands that turn things off.
+        A bare `S` word is left alone deliberately, so the modal speed survives.
+      - **`[OPTION STOP]`** on leaves `M01` in the stream and grblHAL holds on it —
+        confirmed, `Hold:0` on the board, CYCLE START resumes and the program runs
+        to completion. Off strips the word rather than trusting the firmware to
+        ignore it, which would make behaviour depend on the build on the bench.
+      - **`[BLOCK DELETE]`** skips `/` blocks and greys them in the listing rather
+        than hiding them, so a student can see what the switch is doing.
+- [ ] **After an `error:N` halts a job, CYCLE START restarts from the top** rather
+      than refusing. The dead "resume a stopped stream" branch that used to swallow
+      it is gone, but a control should probably insist on RESET first.
 - [ ] Timers pane: cycle time, last cycle, parts counter.
 - [ ] **Manual sends during a running job corrupt flow control.** Pre-existing, and
       found while wiring the `$G` refresh: the streamer credits every `ok` it sees
@@ -235,6 +247,14 @@ Things that cost real time to discover. Do not re-derive them.
   not `index.html.gz`), and a companion field named `<path>S` must carry the byte
   count. That combination is verified to work; neither was tested in isolation.
   Exact command in README.
+- **CYCLE START has three jobs and they must be checked in the right order.**
+  Resume a held machine, step in SINGLE BLOCK, or start a program. The hold check
+  has to come first: an `M01` hold leaves the streamer *running*, so every other
+  check misses it and the key appears dead exactly when the operator needs it.
+  Two bugs lived in that ordering — CYCLE START mid-cycle restarted the program
+  from the top with the tool in the cut, and after RESET it sent a resume byte to
+  a machine with nothing queued instead of starting the job, because the streamer
+  still held the old line list. RESET now clears the streamer rather than pausing it.
 - **`$13` and G20/G21 are different questions.** `$13` says what unit `MPos:`
   arrives in; G20/G21 says what the numbers in a *block* mean. Commanding `G20`
   does not change the report — measured on the board. Any inch display therefore

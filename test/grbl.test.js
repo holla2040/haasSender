@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber } from '../src/grbl.js'
+import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -58,17 +58,46 @@ test('prepare strips comments, blanks, the tape wrapper and the O-number', () =>
   assert.deepEqual(prepare(TAPE), [
     { n: 3, text: 'G21 G90' },
     { n: 6, text: 'G1 X10  Y20' },
-    { n: 7, text: 'G0 Z50' },      // block delete is OFF, so the slash line runs
+    // The slash is kept: the program display shows the file as written, and
+    // whether the block runs is the front panel's business, not the parser's.
+    { n: 7, text: '/G0 Z50', del: true },
     { n: 8, text: 'M30' }
   ])
 })
 
-// The switch is off at power-up on a real machine, so a `/` block runs unless the
-// operator says otherwise. Dropping them unconditionally is that switch jammed on.
+// The switch is off at power-up on a real machine, so a `/` block runs — without
+// its slash. Dropping them unconditionally is that switch jammed on.
 test('BLOCK DELETE decides whether a slashed block runs', () => {
-  const on = prepare(TAPE, { blockDelete: true })
-  assert.equal(on.some(l => l.text === 'G0 Z50'), false)
-  assert.equal(prepare(TAPE).some(l => l.text === 'G0 Z50'), true)
+  const lines = prepare(TAPE)
+  assert.deepEqual(wireProgram(lines, { blockDelete: false }).wire,
+    ['G21 G90', 'G1 X10 Y20', 'G0 Z50', 'M30'])
+  assert.deepEqual(wireProgram(lines, { blockDelete: true }).wire,
+    ['G21 G90', 'G1 X10 Y20', 'M30'])
+})
+
+// A switch that removes a block must not slide the running-block highlight off
+// the row it belongs to, so the wire list carries where each line came from.
+test('wireProgram reports which source row each wire line came from', () => {
+  const lines = prepare(TAPE)
+  assert.deepEqual(wireProgram(lines, {}).rows, [0, 1, 2, 3])
+  assert.deepEqual(wireProgram(lines, { blockDelete: true }).rows, [0, 1, 3])
+})
+
+test('DRY RUN suppresses spindle and coolant on, but never the offs', () => {
+  const lines = prepare(['M3 S1000', 'M8', 'G1 X1 M3', 'M9', 'M5', 'M30'].join('\n'))
+  // `S1000` survives on its own, deliberately. A speed with no M3 spins nothing,
+  // and it keeps the modal state the program set — so leaving dry run and running
+  // the same program for real behaves identically. Only the M-codes are the switch.
+  assert.deepEqual(wireProgram(lines, { dryRun: true }).wire,
+    ['S1000', 'G1 X1', 'M9', 'M5', 'M30'])
+  assert.deepEqual(wireProgram(lines, { dryRun: false }).wire,
+    ['M3 S1000', 'M8', 'G1 X1 M3', 'M9', 'M5', 'M30'])
+})
+
+test('OPTION STOP decides whether M01 reaches the machine, and M30 is untouched', () => {
+  const lines = prepare(['G1 X1', 'M01', 'G1 X2', 'M30'].join('\n'))
+  assert.deepEqual(wireProgram(lines, { optionStop: true }).wire, ['G1 X1', 'M01', 'G1 X2', 'M30'])
+  assert.deepEqual(wireProgram(lines, { optionStop: false }).wire, ['G1 X1', 'G1 X2', 'M30'])
 })
 
 test('parseONumber finds the program name, and admits when there is none', () => {
@@ -110,6 +139,29 @@ test('Streamer never exceeds the RX buffer and sends every line exactly once', (
   assert.deepEqual(sent.map(w => w.trimEnd()), lines)
   // Sanity: it should actually be pipelining, not sending one line at a time.
   assert.ok(highWater > RX / 2, `expected real pipelining, high water was ${highWater}`)
+})
+
+// One CYCLE START, one block — and it must be one, not two, and not one per ack.
+test('SINGLE BLOCK sends exactly one block per release', () => {
+  const sent = []
+  const s = new Streamer(w => sent.push(w.trimEnd()), 1024)
+  s.singleBlock = true
+  s.start(['G0 X1', 'G0 X2', 'G0 X3'])
+
+  assert.deepEqual(sent, [], 'nothing goes out until CYCLE START')
+
+  s.release()
+  assert.deepEqual(sent, ['G0 X1'])
+  s.release()
+  assert.deepEqual(sent, ['G0 X1'], 'a second press must not run ahead of the ack')
+
+  s.onLine('ok')                       // block 1 accepted; the release is waiting
+  assert.deepEqual(sent, ['G0 X1', 'G0 X2'])
+
+  s.onLine('ok')
+  assert.deepEqual(sent, ['G0 X1', 'G0 X2'], 'an ack alone does not advance')
+  s.release()
+  assert.deepEqual(sent, ['G0 X1', 'G0 X2', 'G0 X3'])
 })
 
 test('Streamer halts on error and remembers which line failed', () => {

@@ -152,6 +152,10 @@ export class Streamer {
   constructor (send, rxBuffer = 128) {
     this.send = send
     this.rxBuffer = rxBuffer
+    // A front-panel switch, not job state: it survives reset() because an
+    // operator who selected SINGLE BLOCK expects the next program to start that
+    // way too, exactly as the physical key would.
+    this.singleBlock = false
     this.reset()
   }
 
@@ -163,6 +167,20 @@ export class Streamer {
     this.inFlight = 0    // sum of `pending`
     this.running = false
     this.error = null
+    this.released = 0    // blocks CYCLE START has let through, in single block
+  }
+
+  /**
+   * SINGLE BLOCK: run one block per CYCLE START.
+   *
+   * Pipelining is the whole point of the streamer the rest of the time, so this
+   * is the one mode that deliberately gives it up — with a single block in flight
+   * the machine has finished it before the next one is even sent, which is what
+   * makes stepping through a program mean anything.
+   */
+  release (n = 1) {
+    this.released += n
+    this.pump()
   }
 
   get total () { return this.lines.length }
@@ -184,6 +202,11 @@ export class Streamer {
   pump () {
     if (!this.running) return
     while (this.next < this.lines.length) {
+      // In single block, hold unless CYCLE START has released a block AND the
+      // previous one has been acknowledged. Both halves matter: without the
+      // second, one press would send two blocks back to back.
+      if (this.singleBlock && (this.released <= 0 || this.pending.length)) return
+
       const wire = this.lines[this.next] + '\n'
 
       // A line that cannot fit an empty buffer would stall the job forever. Fail
@@ -204,6 +227,7 @@ export class Streamer {
       this.pending.push(wire.length)
       this.inFlight += wire.length
       this.next++
+      if (this.singleBlock) this.released--
     }
   }
 
@@ -256,16 +280,16 @@ export function parseONumber (text) {
 }
 
 /**
- * Strip a raw g-code file down to the lines worth sending. Keeps the original
+ * Strip a raw g-code file down to the blocks worth sending. Keeps the original
  * 1-based line number alongside each so the program pane can highlight the right
  * row even though blank and comment lines are gone.
  *
- * `blockDelete` is the front-panel switch, and it is off by default because that
- * is how a machine starts: a `/`-prefixed block RUNS unless the operator has
- * turned BLOCK DELETE on. Dropping them unconditionally — which this did — is the
- * switch jammed on, and it silently skips blocks the programmer meant to run.
+ * A `/`-prefixed block keeps its slash and is flagged `del`, rather than being
+ * dropped here. The program display must show the file as it was written — the
+ * slash is information — and whether the block actually runs is the front panel's
+ * business, decided at CYCLE START by `wireProgram`.
  */
-export function prepare (text, { blockDelete = false } = {}) {
+export function prepare (text) {
   const out = []
   const raw = text.split(/\r?\n/)
   for (let i = 0; i < raw.length; i++) {
@@ -275,18 +299,50 @@ export function prepare (text, { blockDelete = false } = {}) {
     line = line.trim()
     if (!line) continue
 
-    if (line[0] === '/') {
-      if (blockDelete) continue             // switch on: skip the block
-      line = line.slice(1).trim()           // switch off: run it, without the slash
-      if (!line) continue
-    }
-
     // Tape-format wrapper, and the program's own O-number. Neither is a command:
     // grbl has no use for `%`, and a bare `O1234` is a HAAS program name that a
     // grbl parser will answer with error:20.
     if (line === '%' || /^O\s*\d{1,5}\b\s*$/i.test(line)) continue
 
-    out.push({ n: i + 1, text: line })
+    const del = line[0] === '/'
+    if (del && !line.slice(1).trim()) continue
+    out.push(del ? { n: i + 1, text: line, del: true } : { n: i + 1, text: line })
   }
   return out
+}
+
+/**
+ * Turn a prepared program into what actually goes on the wire, given the front
+ * panel's run switches. Returns the wire lines and, alongside, the index in
+ * `lines` each one came from — because a switch that removes a block would
+ * otherwise slide the running-block highlight off the row it belongs to.
+ *
+ * Every switch here is owned by the sender rather than the controller:
+ *
+ * - **BLOCK DELETE** skips `/` blocks. Off means the block runs, without its
+ *   slash — that is a machine's power-up state, not a convenience.
+ * - **OPTION STOP** decides whether `M01` is a stop or a no-op. grbl has no
+ *   optional-stop switch of its own, so with the switch off the word is removed
+ *   before sending; leaving it in and hoping the firmware ignores it would make
+ *   the behaviour depend on which build is on the bench.
+ * - **DRY RUN** suppresses spindle start and coolant on — `M3`/`M4`, `M7`/`M8`.
+ *   `M5` and `M9` are left alone: a switch meant to make the machine safer must
+ *   never strip the commands that turn things *off*.
+ */
+export function wireProgram (lines, { blockDelete = false, optionStop = false, dryRun = false } = {}) {
+  const wire = []
+  const rows = []
+  lines.forEach((l, i) => {
+    if (l.del && blockDelete) return
+    let t = l.del ? l.text.slice(1).trim() : l.text
+
+    if (dryRun) t = t.replace(/\bM0*[3478]\b/gi, ' ').trim()
+    if (!optionStop) t = t.replace(/\bM0*1\b/gi, ' ').trim()
+
+    t = t.replace(/\s{2,}/g, ' ').trim()
+    if (!t) return
+    wire.push(t)
+    rows.push(i)
+  })
+  return { wire, rows }
 }
