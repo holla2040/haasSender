@@ -15,20 +15,36 @@ const AXES = ['X', 'Y', 'Z', 'A']
  */
 export const fmt = (v, inches, stale) => (stale ? '—' : (v ?? 0).toFixed(inches ? 4 : 3))
 
-const droRow = (label, values, inches, stale) => html`
-  <b>${label}</b>${values.map(v => html`<span>${fmt(v, inches, stale)}</span>`)}`
+/**
+ * How much to multiply a reported coordinate by before showing it.
+ *
+ * grbl reports position in whatever `$13` says, and G20/G21 does not change that
+ * — verified on the ClearCore, where `G20` is accepted and the next `MPos:` still
+ * arrives in millimetres. So switching the control to inches is not a matter of
+ * printing another decimal place: 20 mm shown as `20.0000` because the operator
+ * picked inches is a four-digit lie about where the tool is.
+ */
+export const MM_PER_IN = 25.4
+export const displayScale = (reportUnits, units) =>
+  reportUnits === units ? 1 : units === 'IN' ? 1 / MM_PER_IN : MM_PER_IN
+
+const droRow = (label, values, s) => {
+  const k = displayScale(s.reportUnits, s.units)
+  const inches = s.units === 'IN'
+  return html`
+    <b>${label}</b>${values.map(v => html`<span>${fmt(v * k, inches, s.stale)}</span>`)}`
+}
 
 /** The four readouts a HAAS shows on the POSITION page. */
 function positionBody (s) {
-  const inches = s.units === 'IN'
   const work = s.mpos.map((v, i) => v - s.wco[i])
   return html`
     <div class="dro big">
       <b></b>${AXES.map(a => html`<span class="dim">${a}</span>`)}
-      ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), inches, s.stale)}
-      ${droRow('WORK ' + s.wcs, work, inches, s.stale)}
-      ${droRow('MACHINE', s.mpos, inches, s.stale)}
-      ${droRow('DIST TO GO', s.dtg, inches, s.stale)}
+      ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), s)}
+      ${droRow('WORK ' + s.wcs, work, s)}
+      ${droRow('MACHINE', s.mpos, s)}
+      ${droRow('DIST TO GO', s.dtg, s)}
     </div>`
 }
 
@@ -47,6 +63,27 @@ LIST PROGRAM.</pre>`
   return html`<pre>${slice.map((l, i) => html`<div class=${from + i === cur ? 'cur' : ''}>${l.text}</div>`)}</pre>`
 }
 
+/**
+ * The one setting this control really has.
+ *
+ * A HAAS keeps inch/metric as Setting 9, a stored machine setting. On grbl it is
+ * modal g-code — G20 and G21 — so there is nothing stored to read back and the
+ * machine's own `$G` is the only authority. This pane shows what `$G` last
+ * reported, not what we last asked for, which is the difference between a
+ * display and a guess.
+ */
+function settingBody (s) {
+  const inch = s.units === 'IN'
+  return html`<pre>  9  INCH / METRIC        <span class="k">${inch ? 'INCH' : 'METRIC'}</span>   <span class="dim">${inch ? 'G20' : 'G21'}</span>
+
+<span class="dim">CURSOR ◀ ▶ changes the value.</span>
+
+<span class="dim">On a HAAS this is a stored setting. Here it is
+modal g-code, so a program that commands G20 or
+G21 changes it too — this pane follows the
+machine rather than the other way round.</span></pre>`
+}
+
 const MAIN_TITLE = {
   position: 'POSITION',
   program: 'PROGRAM',
@@ -63,13 +100,13 @@ const PLACEHOLDER = {
   current: 'CURRENT COMMANDS — phase 4',
   alarms: 'ALARMS — phase 4',
   param: 'PARAMETER / DIAGNOSTIC',
-  setting: 'SETTING / GRAPHIC',
   help: 'HELP'
 }
 
 function mainBody (s) {
   if (s.activePane === 'position') return positionBody(s)
   if (s.activePane === 'program') return programBody(s)
+  if (s.activePane === 'setting') return settingBody(s)
   return html`<pre class="dim">${PLACEHOLDER[s.activePane] ?? ''}</pre>`
 }
 
@@ -92,7 +129,7 @@ export const screen = (s) => html`
 
     ${pane('tool', 'ACTIVE TOOL', html`
       <pre>T${String(s.tool).padStart(2, '0')}
-<span class="dim">OFFSET</span> ${fmt(s.tlo, s.units === 'IN', s.stale)}</pre>`, false)}
+<span class="dim">OFFSET</span> ${fmt(s.tlo * displayScale(s.reportUnits, s.units), s.units === 'IN', s.stale)}</pre>`, false)}
 
     ${pane('coolant', 'COOLANT', html`
       <pre class=${s.stale ? 'dim' : s.coolant ? 'k' : 'dim'}>${s.stale ? '—' : s.coolant ? 'ON' : 'OFF'}</pre>`, false)}
@@ -106,7 +143,7 @@ export const screen = (s) => html`
     ${pane('position', 'POSITION', html`
       <div class="dro">
         <b></b>${AXES.map(a => html`<span class="dim">${a}</span>`)}
-        ${droRow('WORK', s.mpos.map((v, i) => v - s.wco[i]), s.units === 'IN', s.stale)}
+        ${droRow('WORK', s.mpos.map((v, i) => v - s.wco[i]), s)}
       </div>`, false)}
 
     ${pane('timers', 'TIMERS', html`

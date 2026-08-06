@@ -72,14 +72,23 @@ Small, no design risk, and the first one is a correctness-of-information bug.
       after **2166 ms**, back to live readings **252 ms** after reconnecting.
       **Active Codes is deliberately not blanked** — it is the last modal state we
       were told, not a live reading. Revisit if that turns out to mislead.
-- [ ] **Two-state key treatment.** Replace the green "verified" tint with the
-      inverse once coverage is high: fade *unimplemented* keys, and mark
-      *not-applicable* ones differently — RAPID 5%, and the ATC/chip-conveyor keys
-      that depend on hardware this machine does not have. Two states, not one.
-- [ ] **RAPID 5% tells the truth.** No grbl equivalent (only 100/50/25). Post
-      "not supported on this control" instead of silently doing nothing.
-- [ ] **Units.** Offer G20/G21 and show the active unit. Board reports `$13=0`
-      (mm); HAAS shops usually run inch.
+- [x] **Two-state key treatment.** Three states are drawn, because three are true:
+      green = works, faded = can never work (`UNAVAILABLE` in `keys.js`, 12 keys),
+      plain = not built yet. Faded covers RAPID 5%, the chip conveyor, the tool
+      changer and the programmable coolant. Still to do: **invert the first state
+      once coverage is high** — fade what is missing rather than tint what is done.
+- [x] **RAPID 5% tells the truth.** Pressing any faded key posts its reason to the
+      status bar — `RAPID 5% not supported — this control has 100%, 50% and 25%`.
+      One mechanism, so a key never sits mute.
+- [x] **Units.** Inch/metric lives on the SETTING page as Setting 9, where a HAAS
+      keeps it; cursor ◀ ▶ commands `G20`/`G21` and the pane follows the machine's
+      `$G` rather than what we asked for.
+      **The trap here was real and is worth not re-stepping in:** grbl reports
+      position in whatever `$13` says, and **G20/G21 does not change that.**
+      Verified on the ClearCore — `G20` is accepted and the very next `MPos:` still
+      arrives in millimetres. So an inch display has to *convert*, not reformat.
+      The first cut printed 20 mm as `20.0000` because the operator picked inches.
+      `displayScale()` in `screen.js` now converts, seeded from `$13` at connect.
 - [ ] Reinstall the current build on the board and re-verify from `http://<ip>/`.
 
 ---
@@ -100,6 +109,13 @@ touching anything that is not on the pendant.
 - [ ] **`[BLOCK DELETE]`** — skip `/`-prefixed lines. `prepare()` in `grbl.js`
       currently drops them unconditionally; make it conditional.
 - [ ] Timers pane: cycle time, last cycle, parts counter.
+- [ ] **Manual sends during a running job corrupt flow control.** Pre-existing, and
+      found while wiring the `$G` refresh: the streamer credits every `ok` it sees
+      against a block it sent, so any line typed into MDI mid-job makes it think one
+      more block has been acked than really has, and the RX buffer estimate drifts
+      high. `send()` now declines to append `$G` while `s.job` is set, but the
+      general case — an operator typing a block mid-program — is still open. Either
+      refuse manual sends during a job, or have the streamer count its own acks.
 - [ ] Finish the Overrides group — rapid and spindle override keys are wired but
       unconfirmed; verify each byte actually moves `Ov:` in the status report.
 - [ ] Add every key that now works to `VERIFIED` in `keys.js`.
@@ -201,6 +217,11 @@ Things that cost real time to discover. Do not re-derive them.
   talk to it directly. Serving from the board is same-origin anyway.
 - **Web Serial needs a secure context.** Available on `localhost`, absent on the
   board-served page over plain HTTP.
+- **`$13` and G20/G21 are different questions.** `$13` says what unit `MPos:`
+  arrives in; G20/G21 says what the numbers in a *block* mean. Commanding `G20`
+  does not change the report — measured on the board. Any inch display therefore
+  converts. `$13` can be read back on its own: sending `$13` returns `$13=0`, on
+  the real board and in the simulator alike.
 - **`npm run dev` exits the moment stdin closes.** esbuild's serve mode stops when
   it loses stdin, so launching it from a non-interactive shell returns instantly
   with `[serve] stopped automatically`. Hold stdin open: `sleep 100000 | npm run dev`.

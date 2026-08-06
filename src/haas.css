@@ -315,6 +315,23 @@ body {
     0 calc(var(--u) * .16) 0 #56715a,
     0 calc(var(--u) * .3) calc(var(--u) * .35) rgba(0, 0, 0, .4); }
 
+/* --------------------------------------------------------- not applicable
+
+   The other half of the same scaffolding: keys with nothing underneath them on
+   this control — no grbl equivalent, or hardware the machine does not have. They
+   are faded rather than tinted, because "never" should not look like "not yet".
+   Still pressable: pressing one posts the reason to the status bar. */
+.key.na .lines, .key.na .glyph, .key.na .sup { opacity: .32; }
+.key.na::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: rgba(24, 26, 28, .16);
+  pointer-events: none;
+}
+
 /* keep legends above the wash */
 .key .sup, .key .glyph { z-index: 1; }
 

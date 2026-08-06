@@ -3,7 +3,7 @@ import { websocketTransport, serialTransport, simTransport, servedFromBoard } fr
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen } from './ui/screen.js'
-import { MODES, DISPLAY_PANES } from './keys.js'
+import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
@@ -38,7 +38,11 @@ const s = {
   mode: 'SETUP', fn: 'JOG',
   activePane: 'position',
   mpos: [0, 0, 0, 0], wco: [0, 0, 0, 0], dtg: [0, 0, 0, 0], operator: [0, 0, 0, 0],
-  wcs: 'G54', units: 'MM', incIndex: 1,
+  // Two different units, and conflating them is a real bug rather than a nicety.
+  // `units` is the modal programming unit from G20/G21 — what the numbers in a
+  // block mean, and what the DRO is labelled in. `reportUnits` is what `MPos:`
+  // itself arrives in, which grbl governs with `$13` alone.
+  wcs: 'G54', units: 'MM', reportUnits: 'MM', incIndex: 1,
   machineState: '—', link: 'OFFLINE', stale: true, feed: 0, spindle: 0, spindleDir: 0,
   ov: { feed: 100, rapid: 100, spindle: 100 },
   tool: 0, tlo: 0, coolant: false, jogLock: false,
@@ -69,11 +73,23 @@ setInterval(() => { if (dirty) paint() }, 60)
 // ------------------------------------------------------------------- dispatch
 
 function press (id) {
+  // Say why, rather than swallow the press. A key that looks live and does
+  // nothing teaches a student that the control is unreliable; one that explains
+  // itself teaches them what the machine underneath can actually do.
+  const why = UNAVAILABLE.get(id)
+  if (why) { s.message = why; return invalidate() }
+
   // Mode keys — three modes only, per T2.11.
   if (MODES[id]) { Object.assign(s, MODES[id]); return invalidate() }
 
   // Display keys move the white highlight; they do not change mode.
   if (DISPLAY_PANES[id]) { s.activePane = DISPLAY_PANES[id]; return invalidate() }
+
+  // The SETTING page's one real setting. A HAAS keeps inch/metric in Setting 9;
+  // grbl has no such store, so changing it means commanding the modal pair.
+  if (s.activePane === 'setting' && (id === 'left' || id === 'right')) {
+    return send(s.units === 'IN' ? 'G21' : 'G20')
+  }
 
   const incAt = INCREMENT_KEYS.indexOf(id)
   if (incAt >= 0) { s.incIndex = incAt; return invalidate() }
@@ -132,6 +148,16 @@ function commitInput () {
 function send (line) {
   if (!link) { s.message = 'not connected'; return invalidate() }
   link.send(line + '\n')
+  // Ask what that did to the modal state rather than assume. Units, work offset
+  // and spindle mode all live in `$G`, and a control that displays the unit it
+  // last *requested* is wrong the moment a block changes it.
+  //
+  // Not during a job: the streamer counts one `ok` per line it sent, and every
+  // extra line we slip in returns an `ok` that it will credit against a block
+  // still in flight. Modal state gets re-read when the program ends instead.
+  // ponytail: so a program that switches G20 mid-job is not noticed until it
+  // finishes. Poll `$G` on a slow timer if that ever matters.
+  if (!s.job) link.send('$G\n')
 }
 
 function jogAxis (axis, dir) {
@@ -190,6 +216,16 @@ function onLine (line) {
     return invalidate()
   }
 
+  // A settings echo, `$13=0`. `$13` is the one that matters up here: it is the
+  // report-unit flag, 0 millimetres and 1 inches, and it governs what `MPos:`
+  // means. G20/G21 does NOT — verified on the ClearCore, where `G20` is accepted
+  // and the very next report still comes back in millimetres.
+  const setting = line.match(/^\$(\d+)=(.*)$/)
+  if (setting) {
+    if (setting[1] === '13') s.reportUnits = setting[2].trim() === '1' ? 'IN' : 'MM'
+    return invalidate()
+  }
+
   const fb = parseFeedback(line)
   if (!fb) { s.message = line; return invalidate() }
 
@@ -233,6 +269,7 @@ function applyStatus (st) {
     s.job = null
     s.message = 'program complete'
     s.program.current = 0
+    link?.send('$G\n')      // the program may have left the modal state elsewhere
   }
   s.spindleDir = st.accessory?.includes('S') ? 1 : st.accessory?.includes('C') ? -1 : 0
   s.coolant = !!st.accessory?.includes('F')
@@ -272,6 +309,7 @@ async function connect () {
     link.send('$I\n')
     link.send('$G\n')
     link.send('$#\n')
+    link.send('$13\n')      // are reports in millimetres or inches?
   } catch (e) {
     $('link').textContent = e.message
     $('link').className = 'bad'

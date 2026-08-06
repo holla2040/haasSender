@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit-html'
-import { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, NUMERIC, VERIFIED } from '../keys.js'
+import { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, NUMERIC, VERIFIED, UNAVAILABLE } from '../keys.js'
 
 // The pendant: brushed panel, left-hand controls, screen and keyboard.
 // Layout and key legends follow figure F2.26 of the 2014 Mill Operator's Manual.
@@ -11,14 +11,19 @@ function keyTpl (key, press) {
   if (!key.id) return html`<div class="label">${key.label}</div>`
 
   const style = key.span ? `grid-column: span ${key.span}` : nothing
+  // Three states, because three are true: it works, it can never work, or it is
+  // simply not built yet. The middle one is the easiest to get wrong by omission.
+  const why = UNAVAILABLE.get(key.id)
+  const legend = key.lines.join(' ')
   return html`
     <button
       class=${cls('key', key.variant, key.big && 'big', key.shift && 'shift',
                   key.rule && 'rule', key.inline && 'inline',
-                  VERIFIED.has(key.id) && 'done')}
+                  VERIFIED.has(key.id) && 'done', why && 'na')}
       style=${style}
       data-key=${key.id}
-      title=${VERIFIED.has(key.id) ? key.lines.join(' ') : key.lines.join(' ') + ' — not implemented yet'}
+      title=${why ? `${legend} — ${why}`
+              : VERIFIED.has(key.id) ? legend : `${legend} — not implemented yet`}
       @pointerdown=${(e) => { e.preventDefault(); press(key.id) }}>
       ${key.corner ? html`<i class="corner ${key.corner}"></i>` : nothing}
       ${key.sup ? html`<span class="sup">${key.sup}</span>` : nothing}

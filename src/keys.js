@@ -174,13 +174,23 @@ export const GROUPS = { FUNCTION, JOG, OVERRIDES, DISPLAY, CURSOR, MODE, ALPHA, 
  * keys are wired but not listed, because "wired" is not the same as "works" —
  * the OFFSET display key switches panes but the pane is a placeholder; EDIT and
  * MDI change the mode bar and nothing else; the rapid and spindle override keys
- * send the right byte but nothing has confirmed the machine acts on it.
+ * send the right byte but nothing has confirmed the machine acts on it. The
+ * cursor ◀ ▶ keys are the same case: they change inch/metric on the SETTING page
+ * and do nothing anywhere else, which is not what a green key promises.
  *
  * Add to this list as each phase lands, not when the handler is first written.
+ *
+ * Three states are drawn, because three are true: green here means it works,
+ * faded means it can never work (see UNAVAILABLE), and a plain key means not
+ * yet. Once most of the pendant is live, invert the first one — fade what is
+ * still missing instead of tinting what is done.
  */
 export const VERIFIED = new Set([
   // display pages with real content behind them
   'page-position', 'page-program',
+  // SETTING carries the one setting this control has — inch/metric, observed
+  // switching the board's modal state and the DRO's units together
+  'page-setting',
   // modes whose behaviour exists: jogging and running a program
   'mode-jog', 'mode-memory',
   // handle-jog increments — observed changing the step and the resulting move
@@ -193,6 +203,44 @@ export const VERIFIED = new Set([
   'spindle-cw', 'spindle-stop', 'spindle-ccw',
   // soft reset 0x18
   'reset'
+])
+
+/**
+ * Keys the control can never honour, and the reason, in the words it should say
+ * when one is pressed.
+ *
+ * This is a different state from "not implemented yet" and the pendant draws it
+ * differently. A key that is merely unwired will light up green one day; these
+ * will not, because there is nothing underneath them — either grbl has no such
+ * command at all, or the machine has no such hardware. Telling a student "not
+ * done yet" about a key that is never coming is its own small lie.
+ *
+ * Kept deliberately short. Orienting the spindle, POWER UP RESTART and the
+ * RS-232 SEND/RECEIVE keys are NOT here: they are unimplemented, not impossible,
+ * and claiming otherwise would overstate what we know.
+ */
+export const UNAVAILABLE = new Map([
+  // grbl's rapid override is a three-position switch: 0x95/0x96/0x97. There is no
+  // fourth byte, so this key has nothing to send.
+  ['rapid-5', 'RAPID 5% not supported — this control has 100%, 50% and 25%'],
+
+  // A hobby-class grblHAL mill has no chip conveyor and no tool changer, and the
+  // bench ClearCore has no mechanics attached at all.
+  ['chip-fwd', 'no chip conveyor fitted to this machine'],
+  ['chip-stop', 'no chip conveyor fitted to this machine'],
+  ['chip-rev', 'no chip conveyor fitted to this machine'],
+
+  ['next-tool', 'no tool changer fitted to this machine'],
+  ['tool-release', 'no tool changer fitted to this machine'],
+  ['atc-fwd', 'no tool changer fitted to this machine'],
+  ['atc-rev', 'no tool changer fitted to this machine'],
+  ['recover', 'no tool changer fitted to this machine'],
+
+  // P-Cool: a positionable coolant spigot. Flood and mist exist (0xA0), the
+  // spigot does not.
+  ['coolant-up', 'no programmable coolant fitted to this machine'],
+  ['coolant-down', 'no programmable coolant fitted to this machine'],
+  ['aux-coolant', 'no programmable coolant fitted to this machine']
 ])
 
 // ---------------------------------------------------------------- mode mapping
