@@ -350,36 +350,31 @@ export function parseONumber (text) {
 }
 
 /**
- * Strip a raw g-code file down to the blocks worth sending. Keeps the original
- * 1-based line number alongside each so the program pane can highlight the right
- * row even though blank and comment lines are gone.
+ * Split a program into the blocks the control *displays*.
  *
- * A `/`-prefixed block keeps its slash and is flagged `del`, rather than being
- * dropped here. The program display must show the file as it was written — the
- * slash is information — and whether the block actually runs is the front panel's
- * business, decided at CYCLE START by `wireProgram`.
+ * This is deliberately not the same list as the one that goes on the wire. The
+ * program display shows the file as it was written — comments included, slashes
+ * included, the O-number line included, because that is what a HAAS shows and
+ * what a student is going to edit. Everything that has to come off before a
+ * block reaches grbl comes off in `wireProgram`, at CYCLE START.
+ *
+ * Only two things are dropped, because neither is a block: blank lines, and the
+ * `%` that wraps a tape-format file.
  */
 export function prepare (text) {
   const out = []
   const raw = text.split(/\r?\n/)
   for (let i = 0; i < raw.length; i++) {
-    let line = raw[i]
-    line = line.replace(/\([^)]*\)/g, '')   // (inline comments)
-    line = line.replace(/;.*$/, '')          // ; trailing comments
-    line = line.trim()
-    if (!line) continue
-
-    // Tape-format wrapper, and the program's own O-number. Neither is a command:
-    // grbl has no use for `%`, and a bare `O1234` is a HAAS program name that a
-    // grbl parser will answer with error:20.
-    if (line === '%' || /^O\s*\d{1,5}\b\s*$/i.test(line)) continue
-
-    const del = line[0] === '/'
-    if (del && !line.slice(1).trim()) continue
-    out.push(del ? { n: i + 1, text: line, del: true } : { n: i + 1, text: line })
+    const line = raw[i].trim()
+    if (!line || line === '%') continue
+    out.push(line[0] === '/' ? { n: i + 1, text: line, del: true } : { n: i + 1, text: line })
   }
   return out
 }
+
+/** Everything in a block that is a note to a human rather than an instruction. */
+export const stripComments = (text) =>
+  text.replace(/\([^)]*\)/g, ' ').replace(/;.*$/, ' ').replace(/\s{2,}/g, ' ').trim()
 
 /**
  * Turn a prepared program into what actually goes on the wire, given the front
@@ -406,7 +401,11 @@ export function wireProgram (lines, { blockDelete = false, optionStop = false, d
 
   lines.forEach((l, i) => {
     if (l.del && blockDelete) return
-    let t = l.del ? l.text.slice(1).trim() : l.text
+    let t = stripComments(l.del ? l.text.slice(1) : l.text)
+
+    // The program's own O-number is a name, not a command: a grbl parser answers
+    // a bare `O1234` with error:20.
+    if (!t || /^O\s*\d{1,5}$/i.test(t)) return
 
     if (dryRun) t = t.replace(/\bM0*[3478]\b/gi, ' ').trim()
     if (!optionStop) t = t.replace(/\bM0*1\b/gi, ' ').trim()
@@ -429,6 +428,41 @@ export function wireProgram (lines, { blockDelete = false, optionStop = false, d
     push(t, i)
   })
   return { wire, rows }
+}
+
+// ------------------------------------------------------------ word-level edit
+
+/**
+ * Split a block into the things a HAAS cursor can land on.
+ *
+ * The cursor on a real control selects a *word* — an address letter and its
+ * value, `X-1.5` or `G01` — not a character. Getting this right is the whole
+ * foundation of EDIT: INSERT, ALTER and DELETE all operate on whatever this
+ * returns, so a tokeniser that splits `X-1.5` into `X`, `-` and `1.5` makes
+ * every one of them wrong in the same way.
+ *
+ * A comment is one word too. It is a thing on the line an operator wants to
+ * select and retype, and treating `(ROUGH PASS)` as five words would be useless.
+ */
+export function words (block) {
+  return String(block ?? '').match(/\([^)]*\)|;.*$|\/|[A-Za-z][-+]?[\d.]*|\S+/g) ?? []
+}
+
+/** Put a block back together from its words, with the single spaces a control uses. */
+export const joinWords = (list) => list.join(' ').replace(/^\/ /, '/').trim()
+
+/**
+ * Replace, insert after, or delete the word at `at`.
+ *
+ * Returns the new block text. `insert` with `at` past the end appends, which is
+ * what INSERT on an empty block has to do.
+ */
+export function editBlock (block, at, op, value = '') {
+  const w = words(block)
+  if (op === 'alter') w[at] = value
+  else if (op === 'insert') w.splice(at + 1, 0, value)
+  else if (op === 'delete') w.splice(at, 1)
+  return joinWords(w.filter(x => x !== undefined && x !== ''))
 }
 
 /**

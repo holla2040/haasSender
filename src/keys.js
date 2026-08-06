@@ -224,7 +224,26 @@ export const VERIFIED = new Set([
   // M3/M4/M5, covered by the deferred M-code test and seen driving the spindle pane
   'spindle-cw', 'spindle-stop', 'spindle-ccw',
   // soft reset 0x18
-  'reset'
+  'reset',
+
+  // EDIT: the word-level cursor and the four keys that act on it. Watched
+  // altering, inserting and deleting a word, unwinding all three with UNDO, and
+  // writing the result back into control memory.
+  'mode-edit', 'insert', 'alter', 'delete', 'undo',
+  // MDI — a typed block ran on the board, and a bad one came back pinned to the
+  // line that caused it
+  'mode-mdi',
+  // The cursor group. Every pane with something to point at now responds: the
+  // EDIT word cursor, the offset grid, the tool table, control memory, and
+  // inch/metric on the SETTING page. On a pane with no cursor they do nothing,
+  // which is what the machine's do too.
+  'left', 'right', 'up', 'down', 'home', 'end', 'page-up', 'page-down',
+  // Typing. These feed the input bar, which is the entry buffer WRITE/ENTER
+  // commits into whichever pane is active — offsets, tool lengths, MDI blocks and
+  // the words EDIT inserts were all typed with these.
+  ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(c => 'alpha-' + c.toLowerCase()),
+  ...'0123456789'.split('').map(d => 'num-' + d),
+  'minus', 'dot', 'space', 'cancel', 'semicolon', 'paren-open', 'paren-close'
 ])
 
 /**
@@ -274,8 +293,9 @@ export const UNAVAILABLE = new Map([
 export const MODES = {
   'mode-zero-return': { mode: 'SETUP', fn: 'ZERO' },
   'mode-jog': { mode: 'SETUP', fn: 'JOG' },
-  'mode-edit': { mode: 'EDIT', fn: 'EDIT' },
-  'mode-mdi': { mode: 'EDIT', fn: 'MDI' },
+  // EDIT puts the program in the main display, where it is big enough to work in.
+  'mode-edit': { mode: 'EDIT', fn: 'EDIT', activePane: 'program' },
+  'mode-mdi': { mode: 'EDIT', fn: 'MDI', activePane: 'mdi' },
   // LIST PROGRAM shows control memory in the main display, so selecting the mode
   // and selecting the pane are the same act.
   'mode-list': { mode: 'EDIT', fn: 'LIST', activePane: 'list' },
@@ -293,6 +313,8 @@ export const DISPLAY_PANES = {
   'page-setting': 'setting',
   'page-help': 'help'
 }
+// `mdi` and `list` are panes too, but they are reached by their MODE key rather
+// than by a display key — which is how the machine does it.
 
 /** Handle-jog increments, in the order the keys sit on the panel. */
 export const INCREMENTS = {

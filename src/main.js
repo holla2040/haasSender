@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
@@ -66,6 +66,12 @@ const s = {
   // about — the board is built with N_TOOLS 0, so this control owns it.
   offsets: {}, offsetRow: 0, offsetCol: 0,
   offsetPage: 'work', tools: {}, toolRow: 0,
+  // EDIT: which block, and which *word* in it. The HAAS cursor selects a word —
+  // address plus value — and INSERT, ALTER and DELETE all act on that one word.
+  editRow: 0, editWord: 0, undoStack: [],
+  // MDI keeps what it ran, so an error can be shown against the block that caused
+  // it rather than on its own.
+  mdi: [],
   dial: 0
 }
 
@@ -142,6 +148,18 @@ function press (id) {
     if (id === 'home') { s.offsetRow = 0; s.offsetCol = 0; return invalidate() }
     if (id === 'end') { s.offsetRow = WCS.length - 1; return invalidate() }
     if (id === 'part-zero-set') return partZeroSet()
+  }
+
+  // EDIT: the cursor walks the program by word, and four keys change it.
+  if (editing()) {
+    const move = {
+      left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1],
+      'page-up': [0, -12], 'page-down': [0, 12]
+    }[id]
+    if (move) return moveCursor(...move)
+    if (id === 'home') { s.editRow = 0; s.editWord = 0; return invalidate() }
+    if (id === 'end') { s.editRow = s.program.lines.length - 1; s.editWord = 0; return invalidate() }
+    if (['insert', 'alter', 'delete', 'undo'].includes(id)) return editKey(id)
   }
 
   // LIST PROGRAM: the cursor walks control memory.
@@ -297,6 +315,120 @@ function partZeroSet () {
   writeOffset(s.mpos[s.offsetCol] * k)
 }
 
+// ------------------------------------------------------------------ EDIT mode
+
+const editing = () => s.mode === 'EDIT' && s.fn === 'EDIT' && s.program.lines.length > 0
+const editLine = () => s.program.lines[s.editRow]
+
+/** Clamp the cursor after the program under it has changed shape. */
+function clampCursor () {
+  s.editRow = Math.max(0, Math.min(s.program.lines.length - 1, s.editRow))
+  const n = words(editLine()?.text).length
+  s.editWord = Math.max(0, Math.min(Math.max(0, n - 1), s.editWord))
+}
+
+/**
+ * Move the cursor by whole words, running on into the next block at the end of
+ * one — which is how a HAAS cursor behaves, and the reason it is a word cursor
+ * and not a character one.
+ */
+function moveCursor (dWord, dRow) {
+  if (dRow) {
+    s.editRow = Math.max(0, Math.min(s.program.lines.length - 1, s.editRow + dRow))
+    s.editWord = 0
+    return invalidate()
+  }
+  const n = words(editLine()?.text).length
+  const next = s.editWord + dWord
+  if (next < 0) {
+    if (s.editRow === 0) return invalidate()
+    s.editRow--
+    s.editWord = Math.max(0, words(editLine()?.text).length - 1)
+  } else if (next >= n) {
+    if (s.editRow >= s.program.lines.length - 1) return invalidate()
+    s.editRow++
+    s.editWord = 0
+  } else {
+    s.editWord = next
+  }
+  invalidate()
+}
+
+/**
+ * Every edit goes through here, so every edit is undoable and every edit is
+ * written back to control memory. An editor that can change a program but not
+ * put it back is a toy.
+ */
+function applyEdit (lines, message) {
+  s.undoStack.push({
+    lines: s.program.lines.map(l => ({ ...l })),
+    editRow: s.editRow,
+    editWord: s.editWord
+  })
+  if (s.undoStack.length > 50) s.undoStack.shift()
+
+  s.program = { ...s.program, lines }
+  clampCursor()
+  saveEditedProgram()
+  s.message = message
+  invalidate()
+}
+
+/** Put the edited program back into control memory, under the same O-number. */
+function saveEditedProgram () {
+  const at = s.programs.findIndex(p => p.o === s.program.o)
+  if (at < 0) return             // not from the directory — an MDI scratch block
+  s.programs[at] = { ...s.programs[at], text: s.program.lines.map(l => l.text).join('\n') }
+  if (!saveDirectory()) s.message = 'edit not stored — browser storage refused'
+}
+
+function editKey (id) {
+  const line = editLine()
+  const typed = s.input.trim()
+
+  if (id === 'undo') {
+    const back = s.undoStack.pop()
+    if (!back) { s.message = 'nothing to undo'; return invalidate() }
+    s.program = { ...s.program, lines: back.lines }
+    s.editRow = back.editRow
+    s.editWord = back.editWord
+    saveEditedProgram()
+    s.message = `undo — ${s.undoStack.length} left`
+    return invalidate()
+  }
+
+  if (id === 'delete') {
+    // Nothing typed and the block has one word left: the block itself goes.
+    const w = words(line.text)
+    const lines = w.length <= 1
+      ? s.program.lines.filter((_, i) => i !== s.editRow)
+      : s.program.lines.map((l, i) =>
+          i === s.editRow ? { ...l, text: editBlock(l.text, s.editWord, 'delete') } : l)
+    if (!lines.length) { s.message = 'a program needs at least one block'; return invalidate() }
+    s.input = ''
+    return applyEdit(lines, w.length <= 1 ? 'block deleted' : `deleted ${w[s.editWord]}`)
+  }
+
+  if (!typed) {
+    s.message = `type the word first, then ${id === 'alter' ? 'ALTER' : 'INSERT'}`
+    return invalidate()
+  }
+
+  s.input = ''
+  if (id === 'alter') {
+    const lines = s.program.lines.map((l, i) =>
+      i === s.editRow ? { ...l, text: editBlock(l.text, s.editWord, 'alter', typed) } : l)
+    return applyEdit(lines, `altered to ${typed}`)
+  }
+
+  // INSERT after the cursor. On a block that is only a comment, or at the end of
+  // the program, this is how a new block gets written.
+  const lines = s.program.lines.map((l, i) =>
+    i === s.editRow ? { ...l, text: editBlock(l.text, s.editWord, 'insert', typed) } : l)
+  s.editWord++
+  return applyEdit(lines, `inserted ${typed}`)
+}
+
 // ------------------------------------------------------------------ tool table
 
 const TOOLS = 'haassender.tools'
@@ -449,8 +581,14 @@ function commitInput () {
   }
 
   s.input = ''
+  if (!v) return invalidate()
+
+  if (s.activePane === 'mdi') {
+    s.mdi = [...s.mdi, { text: v }].slice(-12)
+    s.message = ''
+  }
+  send(v)
   invalidate()
-  if (v) send(v)
 }
 
 function send (line) {
@@ -574,6 +712,10 @@ function onLine (line) {
   if (line.startsWith('error:')) {
     const n = Number(line.slice(6))
     s.message = `error ${n} — ${describeError(n)}`
+    // Pin it to the MDI block that caused it. A student typing blocks by hand
+    // learns far more from "G1 X10 — needs a feed rate" than from the code alone.
+    const last = s.mdi[s.mdi.length - 1]
+    if (last && !last.error) last.error = `error ${n}: ${describeError(n)}`
     return invalidate()
   }
 

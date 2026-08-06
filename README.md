@@ -15,19 +15,19 @@ Target hardware is the companion [grblhal-clearcore](../grblhal-clearcore) proje
 (Teknic ClearCore, 4-axis XYZA). Reference for the control's layout is the 2014
 Mill Operator's Manual in `reference/`; the pendant photos are in `images/`.
 
-Status: **phase 3 of 6** — transport, protocol and job streaming are verified
-against real hardware; the pendant shell is built; and Operation mode works end to
-end. A student imports a program, picks it from control memory with LIST PROGRAM,
-sets the run switches and runs it, with the overrides live and the cycle timers
-counting. 36 of the 132 keys do something and are tinted green; 12 are faded
-because this control can never honour them; the rest draw and say so when pressed.
-Offsets, current commands, alarms and on-control editing are phases 4-5.
+Status: **phase 5 of 6** — the whole operator workflow runs. A student imports a
+program, picks it from control memory with LIST PROGRAM, sets work offsets and
+tool lengths on the OFFSET pages, edits blocks word by word in EDIT, types blocks
+in MDI, and runs the job with the run switches, overrides and cycle timers live.
+98 of the 132 keys work and are tinted green; 12 are faded because this control
+can never honour them; the rest draw and say so when pressed. Remaining: the
+alarms pane, and Web Serial against real USB hardware.
 
 ## Run it
 
 ```
 npm install
-npm test          # 28 tests, no hardware needed
+npm test          # 47 tests, no hardware needed
 npm run dev       # http://localhost:8000
 npm run build     # dist/index.html.gz for the board's SD card
 ```

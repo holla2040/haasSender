@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -54,15 +54,24 @@ const TAPE = [
   '%'
 ].join('\n')
 
-test('prepare strips comments, blanks, the tape wrapper and the O-number', () => {
+// What the control DISPLAYS: the file as written. Comments, slashes and the
+// O-number line all stay, because that is what a HAAS shows and what a student
+// edits. Only blanks and the tape wrapper go, because neither is a block.
+test('prepare keeps the program as written, minus blanks and the tape wrapper', () => {
   assert.deepEqual(prepare(TAPE), [
+    { n: 2, text: 'O1234 (FACE THE TOP)' },
     { n: 3, text: 'G21 G90' },
-    { n: 6, text: 'G1 X10  Y20' },
-    // The slash is kept: the program display shows the file as written, and
-    // whether the block runs is the front panel's business, not the parser's.
+    { n: 5, text: '(SETUP: X<0 SIDE)' },
+    { n: 6, text: 'G1 X10 (move) Y20' },
     { n: 7, text: '/G0 Z50', del: true },
-    { n: 8, text: 'M30' }
+    { n: 8, text: 'M30 ; end' }
   ])
+})
+
+// ...and what goes on the WIRE: no comments, no O-number, no comment-only blocks.
+test('wireProgram sends code, not the notes around it', () => {
+  assert.deepEqual(wireProgram(prepare(TAPE), {}).wire,
+    ['G21 G90', 'G1 X10 Y20', 'G0 Z50', 'M30'])
 })
 
 // The switch is off at power-up on a real machine, so a `/` block runs — without
@@ -79,8 +88,9 @@ test('BLOCK DELETE decides whether a slashed block runs', () => {
 // the row it belongs to, so the wire list carries where each line came from.
 test('wireProgram reports which source row each wire line came from', () => {
   const lines = prepare(TAPE)
-  assert.deepEqual(wireProgram(lines, {}).rows, [0, 1, 2, 3])
-  assert.deepEqual(wireProgram(lines, { blockDelete: true }).rows, [0, 1, 3])
+  // Rows 0 and 2 are the O-number and a comment-only block: displayed, not sent.
+  assert.deepEqual(wireProgram(lines, {}).rows, [1, 3, 4, 5])
+  assert.deepEqual(wireProgram(lines, { blockDelete: true }).rows, [1, 3, 5])
 })
 
 test('DRY RUN suppresses spindle and coolant on, but never the offs', () => {
@@ -279,4 +289,35 @@ test('an unmeasured tool applies no offset, and G43.1 is left alone', () => {
 test('toolsUsed reports which offsets a program expects', () => {
   assert.deepEqual(toolsUsed(prepare(['G43 H1 Z5', 'G0 X1', 'G43 H03 Z5'].join('\n'))), [1, 3])
   assert.deepEqual(toolsUsed(prepare(['G0 X1', 'G49'].join('\n'))), [])
+})
+
+// ------------------------------------------------------- the word-level cursor
+
+// Everything in EDIT stands on this. A tokeniser that splits X-1.5 into three
+// pieces makes INSERT, ALTER and DELETE wrong in the same way, and the operator
+// finds out by scrapping a part.
+test('words() splits a block the way a HAAS cursor moves', () => {
+  assert.deepEqual(words('G1 X-1.5 Y.25 F600'), ['G1', 'X-1.5', 'Y.25', 'F600'])
+  assert.deepEqual(words('G01X10Y20'), ['G01', 'X10', 'Y20'], 'no spaces is still four words')
+  assert.deepEqual(words('X+.5'), ['X+.5'])
+  // A comment is one selectable thing, not five.
+  assert.deepEqual(words('G0 X1 (ROUGH PASS) Y2'), ['G0', 'X1', '(ROUGH PASS)', 'Y2'])
+  assert.deepEqual(words('M30 ; done'), ['M30', '; done'])
+  // The block-delete slash is its own word, so the cursor can sit on it.
+  assert.deepEqual(words('/G0 Z50'), ['/', 'G0', 'Z50'])
+  assert.deepEqual(words(''), [])
+  assert.deepEqual(words(null), [])
+})
+
+test('editBlock alters, inserts after, and deletes one word', () => {
+  const b = 'G1 X10 Y20 F600'
+  assert.equal(editBlock(b, 1, 'alter', 'X-5'), 'G1 X-5 Y20 F600')
+  assert.equal(editBlock(b, 1, 'insert', 'Z3'), 'G1 X10 Z3 Y20 F600')
+  assert.equal(editBlock(b, 1, 'delete'), 'G1 Y20 F600')
+  // Insert past the end appends — what INSERT on an empty block must do.
+  assert.equal(editBlock('', 0, 'insert', 'G0'), 'G0')
+  assert.equal(editBlock('G0', 5, 'insert', 'X1'), 'G0 X1')
+  // A slashed block keeps its slash tight against the block, as it was written.
+  assert.equal(editBlock('/G0 Z50', 2, 'alter', 'Z10'), '/G0 Z10')
+  assert.equal(editBlock('/G0 Z50', 0, 'delete'), 'G0 Z50')
 })

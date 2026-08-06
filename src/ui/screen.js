@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit-html'
-import { WCS, TOOL_COUNT } from '../grbl.js'
+import { WCS, TOOL_COUNT, words } from '../grbl.js'
 
 // The control display: one fixed layout of thirteen panes, per figure F2.27 and
 // section 2.3.4 of the 2014 Mill Operator's Manual. The panes do not change; what
@@ -61,7 +61,24 @@ function positionBody (s) {
     </div>`
 }
 
+/**
+ * The program with the EDIT cursor on it — a *word* picked out, not a character,
+ * because that is the unit a HAAS cursor moves in and the unit INSERT, ALTER and
+ * DELETE all act on.
+ */
+function editBody (s) {
+  const from = Math.max(0, Math.min(s.editRow - 6, s.program.lines.length - 15))
+  return html`<pre>${s.program.lines.slice(from, from + 15).map((l, i) => {
+    const row = from + i
+    if (row !== s.editRow) return html`<div class=${l.del && s.blockDelete ? 'skipped' : ''}>${l.text}</div>`
+    const w = words(l.text)
+    return html`<div>${w.map((word, j) => html`<span
+      class=${j === s.editWord ? 'cur' : ''}>${word}</span>${j < w.length - 1 ? ' ' : ''}`)}</div>`
+  })}</pre>`
+}
+
 function programBody (s) {
+  if (s.mode === 'EDIT' && s.fn === 'EDIT' && s.program.lines.length) return editBody(s)
   if (!s.program.lines.length) {
     return html`<pre class="dim">no program selected
 
@@ -159,6 +176,20 @@ position. G154 P1-P3 are this control's G59.1-G59.3 —
 a HAAS goes on to P20, and those do not exist here.</span></pre>`
 }
 
+/**
+ * MDI — type a block, WRITE/ENTER runs it.
+ *
+ * The history is worth showing rather than throwing away: half of learning MDI is
+ * seeing what you just told the machine, and an error against the block that
+ * caused it teaches more than an error on its own.
+ */
+function mdiBody (s) {
+  return html`<pre>${s.mdi.length
+    ? s.mdi.map(h => html`<div class=${h.error ? 'k' : ''}>${h.text}${h.error ? '   ' + h.error : ''}</div>`)
+    : html`<span class="dim">Type a block and press WRITE/ENTER.</span>`}
+<span class="k">&gt; ${s.input}_</span></pre>`
+}
+
 /** Control memory: what LIST PROGRAM shows, filed by O-number. */
 function listBody (s) {
   if (!s.programs.length) {
@@ -184,6 +215,7 @@ const MAIN_TITLE = {
   position: 'POSITION',
   program: 'PROGRAM',
   list: 'LIST PROGRAM',
+  mdi: 'MDI',
   current: 'CURRENT COMMANDS',
   alarms: 'ALARMS',
   param: 'PARAMETER / DIAGNOSTIC',
@@ -209,6 +241,7 @@ function mainBody (s) {
   if (s.activePane === 'program') return programBody(s)
   if (s.activePane === 'setting') return settingBody(s)
   if (s.activePane === 'list') return listBody(s)
+  if (s.activePane === 'mdi') return mdiBody(s)
   if (s.activePane === 'offset') return offsetBody(s)
   return html`<pre class="dim">${PLACEHOLDER[s.activePane] ?? ''}</pre>`
 }

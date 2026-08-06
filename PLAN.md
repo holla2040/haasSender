@@ -27,7 +27,7 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 ## Where it stands
 
-Phases 1, 2 and 3 are done and pushed. Of 132 keys: **36 work** (green), **12 can
+Phases 1 through 5 are done and pushed. Of 132 keys: **98 work** (green), **12 can
 never work** on this control (faded), the rest draw and say so when pressed.
 
 | | |
@@ -39,7 +39,10 @@ never work** on this control (faded), the rest draw and say so when pressed.
 | Run switches: SINGLE BLOCK, DRY RUN, OPTION STOP, BLOCK DELETE | done |
 | Timers: this cycle, last cycle, parts | done |
 | Staleness watchdog, inch/metric, three key states | done |
-| Offsets, tool table, alarms, EDIT and MDI | phases 4-6 |
+| Work offsets, PART ZERO SET, data entry | done, `G10 L2` P-numbers measured |
+| Sender-owned tool table, `G43 H` → `G43.1` | done, verified on the board |
+| EDIT word cursor, INSERT/ALTER/DELETE/UNDO, MDI | done |
+| Alarms pane, Web Serial on real hardware | phase 6 |
 
 ## The bench
 
@@ -204,16 +207,29 @@ The phase with real design in it. Do this before phase 5.
 
 The fiddliest behaviour in the project. Budget accordingly.
 
-- [ ] **Word-level cursor.** The HAAS cursor selects a g-code *word* (address +
-      value), not a character. Everything below depends on getting this right.
-- [ ] `[INSERT]` — insert a word after the cursor.
-- [ ] `[ALTER]` — replace the selected word.
-- [ ] `[DELETE]` — remove the selected word.
-- [ ] `[UNDO]` — at least one level, ideally a stack.
-- [ ] Cursor group finally does something: arrows move by word, `[HOME]`/`[END]`
-      to first/last block, `[PAGE UP]`/`[PAGE DOWN]` by screen.
-- [ ] **`[MDI/DNC]`** — type a block into the input bar, `[WRITE/ENTER]` executes it.
-- [ ] Alpha and numeric keys type into the active pane, not just the input bar.
+- [x] **Word-level cursor.** `words()` in `grbl.js`, tested hard, because a
+      tokeniser that splits `X-1.5` into three pieces makes INSERT, ALTER and
+      DELETE wrong in the same way and the operator finds out by scrapping a part.
+      A comment is one word — it is a thing you select and retype, not five.
+      **This needed a change underneath it:** `prepare()` now keeps the program *as
+      written* — comments, slashes, the O-number line — and everything that has to
+      come off before grbl sees a block comes off in `wireProgram()` at CYCLE START.
+      The display was showing a stripped program, which is not what a HAAS shows
+      and not what a student can edit.
+- [x] `[INSERT]` / `[ALTER]` / `[DELETE]` — act on the selected word. DELETE on a
+      block's last word removes the block; it refuses to empty the program.
+- [x] `[UNDO]` — a 50-deep stack. Every edit goes through one function, so every
+      edit is undoable *and* written back to control memory: an editor that can
+      change a program but not put it back is a toy.
+- [x] Cursor group works everywhere there is something to point at — the EDIT word
+      cursor (running on into the next block at the end of one), the offset grid,
+      the tool table, control memory, inch/metric.
+- [x] **`[MDI/DNC]`** — its own pane with the blocks it has run. An `error:N` is
+      pinned to the block that caused it: `M99  error 20: Unsupported or invalid
+      g-code`. Verified on the board.
+- [x] Alpha and numeric keys type into the active pane — via the input bar, which
+      is the entry buffer `WRITE/ENTER` commits into whichever pane is active.
+      Offsets, tool lengths, MDI blocks and EDIT words all go in this way.
 
 ## Phase 6 — Hardware and install
 
