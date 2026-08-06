@@ -27,13 +27,13 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 ## Where it stands
 
-Phases 1 through 5 are done and pushed; phase 6 all but the USB check. Of 132
-keys: **100 work** (green), **12 can never work** on this control (faded), the
-rest draw and say so when pressed.
+All six phases are done except one item that needs a person at the bench. Of 132
+keys: **103 work**, **12 can never work** on this control, **17 are not built
+yet**. All thirteen display pages are real.
 
-**Not finished:** three display pages are still stubs and the key tint wants
-inverting — see **Still open** below — plus two known bugs listed under phase 3
-and the Web Serial check that needs a board plugged in.
+**The one thing left is Web Serial**, which has never seen a USB board and cannot
+be tested without someone plugging one in — see phase 6. It is deferred, not
+assumed working.
 
 | | |
 |---|---|
@@ -48,7 +48,8 @@ and the Web Serial check that needs a board plugged in.
 | Sender-owned tool table, `G43 H` → `G43.1` | done, verified on the board |
 | EDIT word cursor, INSERT/ALTER/DELETE/UNDO, MDI | done |
 | Alarms pane with causes and recovery, SHIFT for `$` | done |
-| Web Serial against a real USB board | **never tested — needs a board plugged in** |
+| All thirteen display pages | done |
+| Web Serial against a real USB board | **deferred — never tested, needs a board plugged in** |
 
 ## The bench
 
@@ -144,22 +145,23 @@ touching anything that is not on the pendant.
         ignore it, which would make behaviour depend on the build on the bench.
       - **`[BLOCK DELETE]`** skips `/` blocks and greys them in the listing rather
         than hiding them, so a student can see what the switch is doing.
-- [ ] **After an `error:N` halts a job, CYCLE START restarts from the top** rather
-      than refusing. The dead "resume a stopped stream" branch that used to swallow
-      it is gone, but a control should probably insist on RESET first.
+- [x] **CYCLE START refuses to restart a program that stopped on an error**, and
+      says which error and which block. RESET is the acknowledgement that the
+      operator has looked; it is also what clears the streamer. It refuses in
+      alarm too, and points at the ALARMS page for what clears that.
 - [x] Timers pane: THIS CYCLE, LAST CYCLE and a parts counter, off wall-clock time
       so a throttled tab cannot make a cycle look shorter than it was. Only a
       completed cycle counts a part; RESET abandons it. FEED moved to the status
       bar and INC to the icon bar to make room for them.
       **Not persisted** — the counter starts at zero each session. A HAAS keeps its
       M30 counter across power cycles; add that if anyone wants it.
-- [ ] **Manual sends during a running job corrupt flow control.** Pre-existing, and
-      found while wiring the `$G` refresh: the streamer credits every `ok` it sees
-      against a block it sent, so any line typed into MDI mid-job makes it think one
-      more block has been acked than really has, and the RX buffer estimate drifts
-      high. `send()` now declines to append `$G` while `s.job` is set, but the
-      general case — an operator typing a block mid-program — is still open. Either
-      refuse manual sends during a job, or have the streamer count its own acks.
+- [x] **Manual sends are refused while a program runs.** The streamer counts acks
+      to know how full the controller's buffer is, so a line typed from the keypad
+      returns an `ok` it credits against a block still in flight and its estimate
+      drifts high until it overruns for real. Refusing is also what the machine
+      does — a HAAS will not take MDI during a cycle — and a block sent mid-program
+      would queue behind the planner rather than act now, which is not what a
+      student pressing it would expect.
 - [x] Finish the Overrides group — every byte watched moving `Ov:` on the board:
       feed ±10% and 100%, rapid 100/50/25, spindle ±10% and 100%, and the coolant
       toggle appearing in `A:`.
@@ -239,35 +241,45 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 ## Still open
 
-Named here because the plan was quietly claiming more than was true: three of the
-thirteen display pages are still stubs, and the key-tint inversion was buried
-inside a ticked item as an aside. Neither is finished work.
-
-- [ ] **Three display pages are placeholders** — `PLACEHOLDER` in `screen.js`. All
-      three switch panes correctly and none is in `VERIFIED`, so nothing is being
-      claimed falsely, but a student pressing them finds a stub.
-      - **CURRENT COMMANDS** is the one worth doing: the data is already in
-        `s.modal` from `$G`, and a HAAS shows the modal state broken out by group
-        rather than as one string. This is the smallest real win left.
-      - **PARAMETER / DIAGNOSTIC** could list `$$`. That means parsing the settings
-        dump and deciding which of ~90 grbl settings a student should see, which is
-        a design question, not a transcription job.
-      - **HELP** on a HAAS is the manual on the control. The obvious honest version
-        is a page per key group saying what each key does *here* — including which
-        ones this machine cannot do, which `UNAVAILABLE` already knows.
-- [ ] **Invert the key tint now that coverage is high.** 100 of 132 are green,
-      which was the condition set for flipping it: fade what is still missing
-      rather than tint what is done, and keep the third state for what can never
-      work. The CSS and the sets are already there; it is the `.done` rule that
-      changes.
+- [x] **All thirteen display pages are real.** The last three landed together:
+      - **CURRENT COMMANDS** breaks the `$G` modal string into named groups with
+        what each code means, which is the same information ACTIVE CODES shows
+        whole and far more use to a student who cannot yet read a modal string.
+        A code the table does not know still gets a row saying so — a page whose
+        job is stating what is active must not silently drop one.
+      - **PARAMETER / DIAGNOSTIC** lists `$$` as the machine reports it, read-only,
+        deliberately uncurated: choosing which ten of ninety settings a student
+        "should" see is not a judgement this control should make silently.
+        WRITE/ENTER on an empty input bar re-reads them.
+      - **HELP** says where the replica stops being a HAAS, which is the thing a
+        student moving between the two actually needs. The count of impossible
+        keys is read from `UNAVAILABLE` so the page cannot drift from the keypad.
+- [x] **The key tint is inverted.** With 103 of 132 live, tinting what works would
+      tint nearly the whole panel and say nothing. A working key now looks like a
+      key; only the two exceptions are marked — muted for *not yet* (17), faded
+      with dimmed legends for *never* (12). Pressing either says which it is, so
+      no key on the panel is silent about itself any more.
 
 ## Phase 6 — Hardware and install
 
 - [x] WebSocket to the ClearCore (`webui-v3`), verified
 - [x] Install to SD `/www`, served from the board, verified
-- [ ] **Web Serial against real hardware** — the code path exists and has had a bug
-      fixed by inspection, but no USB board has ever been plugged in. ClearCore
-      enumerates as `2890:8022`.
+- [ ] **Web Serial against real hardware — DEFERRED, and untested on purpose.**
+      No USB board has ever been plugged in. The code path exists and has had one
+      bug fixed by inspection, which makes it plausible and unproven, and this
+      project's whole ethic is not shipping that state silently — so it is written
+      down here rather than quietly assumed to work.
+      **It cannot be tested without a person at the bench.** `navigator.serial
+      .requestPort()` opens a native port picker that only a human gesture can
+      answer; no amount of scripting reaches it.
+      **To close it:** plug the ClearCore in over USB (it enumerates as
+      `2890:8022`), open `http://localhost:8000`, choose *USB serial* in the dev
+      strip and press Connect. Then check the four things the websocket transport
+      needed: that `$I` comes back, that the DRO tracks a jog, that a program
+      streams without a buffer overrun (watch `Bf:`), and that pulling the cable
+      trips the staleness watchdog to `LINK DOWN`.
+      **Web Serial needs a secure context**, so this works from `localhost` and
+      *not* from the board-served page over plain HTTP.
 - [x] Alarms pane: a history, newest first, with the grbl code, the plain-English
       cause **and what clears it** — the half the grbl tables never print. Repeats
       of the same fault fold into one entry, since a machine sitting in Alarm

@@ -3,7 +3,7 @@ import { websocketTransport, serialTransport, simTransport, servedFromBoard } fr
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale } from './ui/screen.js'
-import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED } from './keys.js'
+import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
@@ -72,6 +72,9 @@ const s = {
   // MDI keeps what it ran, so an error can be shown against the block that caused
   // it rather than on its own.
   mdi: [], alarms: [], shifted: false,
+  // The machine's own settings, as `$$` reports them. Read-only here: writing a
+  // setting is a different kind of act from writing a work offset.
+  settings: {}, paramRow: 0,
   dial: 0
 }
 
@@ -160,6 +163,18 @@ function press (id) {
     if (id === 'home') { s.editRow = 0; s.editWord = 0; return invalidate() }
     if (id === 'end') { s.editRow = s.program.lines.length - 1; s.editWord = 0; return invalidate() }
     if (['insert', 'alter', 'delete', 'undo'].includes(id)) return editKey(id)
+  }
+
+  // PARAMETER / DIAGNOSTIC: the cursor walks the machine's settings, read-only.
+  if (s.activePane === 'param') {
+    const n = Object.keys(s.settings).length
+    const dr = { up: -1, down: 1, 'page-up': -12, 'page-down': 12 }[id]
+    if (dr !== undefined && n) {
+      s.paramRow = Math.max(0, Math.min(n - 1, s.paramRow + dr))
+      return invalidate()
+    }
+    if (id === 'home') { s.paramRow = 0; return invalidate() }
+    if (id === 'end') { s.paramRow = Math.max(0, n - 1); return invalidate() }
   }
 
   // LIST PROGRAM: the cursor walks control memory.
@@ -266,6 +281,15 @@ function press (id) {
   // Alpha and numeric keys type into the input bar.
   const typed = typedChar(id)
   if (typed !== null) { s.input += typed; return invalidate() }
+
+  // Nothing above claimed it. A key that is not in VERIFIED is simply not built,
+  // and saying so beats sitting mute — the same reason the impossible keys give
+  // their reason. A verified key that lands here did nothing on purpose, because
+  // there is nothing for it to do on this pane, and it stays quiet.
+  if (!VERIFIED.has(id)) {
+    s.message = `${LEGEND[id] ?? id} — not implemented yet`
+    return invalidate()
+  }
 }
 
 function typedChar (id) {
@@ -601,6 +625,20 @@ function commitInput () {
     return writeOffset(Number(v))
   }
 
+  // The PARAMETER page is read-only, so WRITE/ENTER on it means "ask again". A
+  // typed value must not fall through and be sent as g-code — the operator was
+  // aiming at a settings row, and `$20=1` typed by accident changes the machine.
+  if (s.activePane === 'param') {
+    s.input = ''
+    if (v) {
+      s.message = 'this page is read-only — change a setting from MDI, e.g. $20=1'
+      return invalidate()
+    }
+    s.message = 'reading settings'
+    send('$$')
+    return invalidate()
+  }
+
   s.input = ''
   if (!v) return invalidate()
 
@@ -614,17 +652,25 @@ function commitInput () {
 
 function send (line) {
   if (!link) { s.message = 'not connected'; return invalidate() }
+
+  // Not while a program is running, and this is a correctness rule rather than a
+  // policy. grbl answers every line it accepts with `ok`, and the streamer counts
+  // those acks to know how full the controller's receive buffer is. A line slipped
+  // in from the keypad returns an ok the streamer credits against a block still in
+  // flight, so its estimate drifts high until it overruns the buffer for real.
+  //
+  // It is also what the machine does. A HAAS will not take MDI during a cycle, and
+  // a block sent mid-program would not do what a student expects anyway: it would
+  // queue behind everything already in the planner rather than act now.
+  if (s.job) { s.message = 'not while a program is running'; return invalidate() }
+
   link.send(line + '\n')
   // Ask what that did to the modal state rather than assume. Units, work offset
   // and spindle mode all live in `$G`, and a control that displays the unit it
   // last *requested* is wrong the moment a block changes it.
-  //
-  // Not during a job: the streamer counts one `ok` per line it sent, and every
-  // extra line we slip in returns an `ok` that it will credit against a block
-  // still in flight. Modal state gets re-read when the program ends instead.
-  // ponytail: so a program that switches G20 mid-job is not noticed until it
-  // finishes. Poll `$G` on a slow timer if that ever matters.
-  if (!s.job) link.send('$G\n')
+  // ponytail: only manual sends refresh this, so a program that switches G20
+  // mid-job is not noticed until it ends. Poll `$G` slowly if that ever matters.
+  link.send('$G\n')
 }
 
 function jogAxis (axis, dir) {
@@ -669,6 +715,19 @@ function cycleStart () {
       return invalidate()
     }
     s.message = 'already running'
+    return invalidate()
+  }
+
+  // A program that stopped on a rejected block, or a machine sitting in alarm.
+  // Starting from the top would send the tool back through everything it has
+  // already cut, with the fault still there. RESET is the acknowledgement that
+  // the operator has looked, and it is what clears the streamer.
+  if (streamer?.error) {
+    s.message = `press RESET first — the program stopped on error ${streamer.error.code} at block ${streamer.error.line}`
+    return invalidate()
+  }
+  if (/^Alarm/.test(s.machineState)) {
+    s.message = 'machine is in alarm — press ALARMS to see what clears it'
     return invalidate()
   }
 
@@ -749,6 +808,7 @@ function onLine (line) {
   const setting = line.match(/^\$(\d+)=(.*)$/)
   if (setting) {
     if (setting[1] === '13') s.reportUnits = setting[2].trim() === '1' ? 'IN' : 'MM'
+    s.settings = { ...s.settings, [setting[1]]: setting[2].trim() }
     return invalidate()
   }
 

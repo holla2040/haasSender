@@ -291,52 +291,50 @@ body {
 /* X jog keys print the arrow beside the legend, not above it */
 .key.inline { flex-direction: row; gap: calc(var(--u) * .25); }
 
-/* ------------------------------------------------- implemented-and-verified
+/* ----------------------------------------------------- the two exceptions
 
-   Development scaffolding, not part of the real control: a slight green wash
-   marks the keys that actually do something. Applied as a translucent overlay
-   rather than by recolouring the face, so it reads the same over the grey keys,
-   the cyan ones and RESET's orange without fighting any of them.
+   Development scaffolding, not part of the real control, and now inverted: with
+   100 of 132 keys live, tinting what works would mean tinting nearly the whole
+   panel and saying nothing. So a working key is left ALONE — it simply looks like
+   the key it is — and only the two exceptions are marked.
 
-   Remove this block, and the VERIFIED set in keys.js, once the pendant is
-   complete — a real HAAS has no such distinction. */
-.key.done::after {
+   `todo`  — not built yet. A muted wash, because it is coming.
+   `na`    — nothing underneath it on this machine, ever. Faded legends as well,
+             because "never" must not look like "not yet".
+
+   Both stay pressable, and both say what they are when pressed. Remove this
+   block, plus VERIFIED and UNAVAILABLE in keys.js, once the panel is complete —
+   a real HAAS has no such distinction. */
+.key.todo::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
   border-radius: inherit;
-  background: rgba(46, 160, 67, .19);
+  background: rgba(120, 130, 145, .22);
   pointer-events: none;
 }
-.key.done { box-shadow:
-    inset 0 0 0 1px rgba(46, 160, 67, .55),
-    0 0 0 1px #4e7a54,
-    0 calc(var(--u) * .16) 0 #56715a,
+.key.todo .lines, .key.todo .glyph, .key.todo .sup { opacity: .62; }
+.key.todo { box-shadow:
+    inset 0 0 0 1px rgba(90, 100, 115, .5),
+    0 0 0 1px #7d8288,
+    0 calc(var(--u) * .16) 0 #8b9097,
     0 calc(var(--u) * .3) calc(var(--u) * .35) rgba(0, 0, 0, .4); }
 
-/* --------------------------------------------------------- not applicable
-
-   The other half of the same scaffolding: keys with nothing underneath them on
-   this control — no grbl equivalent, or hardware the machine does not have. They
-   are faded rather than tinted, because "never" should not look like "not yet".
-   Still pressable: pressing one posts the reason to the status bar. */
-.key.na .lines, .key.na .glyph, .key.na .sup { opacity: .32; }
+.key.na .lines, .key.na .glyph, .key.na .sup { opacity: .3; }
 .key.na::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
   border-radius: inherit;
-  background: rgba(24, 26, 28, .16);
+  background: rgba(24, 26, 28, .2);
   pointer-events: none;
 }
 
 /* keep legends above the wash */
 .key .sup, .key .glyph { z-index: 1; }
 
-/* the round pushbuttons are already coloured, so they get a ring instead */
-.pb.done { outline: calc(var(--u) * .18) solid rgba(46, 160, 67, .75); outline-offset: calc(var(--u) * .16); }
 
 /* the yellow wedge on the rotary-axis keys */
 .key .corner {

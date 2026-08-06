@@ -180,6 +180,14 @@ export const SHIFTED = Object.fromEntries(
     .map(k => [k.id, k.sup])
 )
 
+/** Key id to the legend printed on it, for messages that need to name a key. */
+export const LEGEND = Object.fromEntries(
+  Object.values(GROUPS)
+    .flatMap(g => g.rows.flat())
+    .filter(k => k.id)
+    .map(k => [k.id, k.lines.join(' ').trim() || k.id])
+)
+
 /**
  * Keys that actually work, drawn with a green tint so it is obvious at a glance
  * what is real and what is still just a legend on a button.
@@ -264,7 +272,11 @@ export const VERIFIED = new Set([
   // this keypad at all.
   'shift',
   // ALARMS shows the history with the cause and the recovery
-  'page-alarms'
+  'page-alarms',
+  // The last three display pages: CURRENT COMMANDS breaks out the `$G` modal
+  // state by group, PARAMETER/DIAGNOSTIC reads `$$` off the machine read-only,
+  // and HELP says where this replica stops being a HAAS
+  'page-current', 'page-param', 'page-help'
 ])
 
 /**

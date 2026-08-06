@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html'
-import { WCS, TOOL_COUNT, words } from '../grbl.js'
+import { WCS, TOOL_COUNT, words, modalGroups } from '../grbl.js'
+import { UNAVAILABLE } from '../keys.js'
 
 // The control display: one fixed layout of thirteen panes, per figure F2.27 and
 // section 2.3.4 of the 2014 Mill Operator's Manual. The panes do not change; what
@@ -212,6 +213,68 @@ one block and halts the program.</pre>`
 <div class="dim">      ${a.recovery ?? ''}</div>`)}</pre>`
 }
 
+/**
+ * CURRENT COMMANDS — the modal state, broken out by group.
+ *
+ * All of this comes from the one `$G` string the ACTIVE CODES pane already shows
+ * whole. Broken out and named, it is readable by a student who cannot yet read a
+ * modal string, which is most of the point of a trainer.
+ */
+function currentBody (s) {
+  const rows = modalGroups(s.modal)
+  if (!rows.length) {
+    return html`<pre class="dim">nothing from the machine yet
+
+CURRENT COMMANDS shows the modal state —
+what the control will do if you give it a
+move with no other words on the line.</pre>`
+  }
+  return html`<pre>${rows.map(r => html`<div>${(r.group + '              ').slice(0, 14)}<span
+    class="k">${(r.code + '      ').slice(0, 7)}</span><span class="dim">${r.meaning}</span></div>`)}
+<span class="dim">This is the one $G string the ACTIVE CODES pane shows
+whole, split into the groups a HAAS names them by.</span></pre>`
+}
+
+/**
+ * PARAMETER / DIAGNOSTIC — the machine's own settings, as it reports them.
+ *
+ * Deliberately not curated. grbl has around ninety numbered settings and deciding
+ * which ten a student "should" see is a judgement this control has no business
+ * making silently — the numbers are the machine's, and `$$` is what it says. What
+ * is added is the handful of descriptions that matter for reading the rest of
+ * this control, and nothing is editable here: writing a setting is a different
+ * kind of act from writing a work offset, and it is not one to do by accident.
+ */
+function paramBody (s) {
+  const keys = Object.keys(s.settings)
+  if (!keys.length) {
+    return html`<pre class="dim">no settings read yet
+
+Press WRITE/ENTER on an empty input bar
+here to ask the machine for $$.</pre>`
+  }
+  const from = Math.max(0, Math.min(s.paramRow - 6, keys.length - 14))
+  return html`<pre>${keys.slice(from, from + 14).map((k, i) => html`<div
+    class=${from + i === s.paramRow ? 'cur' : ''}>${('   $' + k + '        ').slice(0, 8)}${
+    ('            ' + s.settings[k]).slice(-13)}  <span class="dim">${SETTING_NOTE[k] ?? ''}</span></div>`)}
+<span class="dim">Read-only. These are the machine's, not this control's,
+and $13 in particular decides what unit MPos: arrives in.</span></pre>`
+}
+
+/** The few settings that explain how the rest of this control behaves. */
+const SETTING_NOTE = {
+  13: 'report in inches — governs what MPos: means',
+  20: 'soft limits',
+  21: 'hard limits',
+  22: 'homing cycle enabled',
+  30: 'max spindle RPM',
+  31: 'min spindle RPM',
+  32: 'laser mode',
+  130: 'X max travel',
+  131: 'Y max travel',
+  132: 'Z max travel'
+}
+
 /** Control memory: what LIST PROGRAM shows, filed by O-number. */
 function listBody (s) {
   if (!s.programs.length) {
@@ -245,11 +308,46 @@ const MAIN_TITLE = {
   help: 'HELP'
 }
 
-const PLACEHOLDER = {
-  current: 'CURRENT COMMANDS — phase 4',
-  param: 'PARAMETER / DIAGNOSTIC',
-  help: 'HELP'
+/**
+ * HELP — on a real HAAS this is the manual on the control. Here the useful thing
+ * is what is different, because a student moving between this and a real machine
+ * needs to know exactly where the replica stops.
+ *
+ * The count of keys that can never work is read from `UNAVAILABLE` rather than
+ * written down, so this page cannot drift out of step with the keypad.
+ */
+function helpBody (s) {
+  return html`<pre>This is a HAAS-lookalike control driving a grblHAL
+machine. The keypad, the panes and the modes are the
+real layout. The machine underneath is not a HAAS, and
+these are the places that shows:
+
+<span class="k">Faded keys</span>      ${UNAVAILABLE.size} keys have nothing underneath them on
+                this machine — no chip conveyor, no tool
+                changer, no programmable coolant, and no
+                5% rapid in grbl. Press one and it says so.
+
+<span class="k">Tool offsets</span>    This control owns the tool table; the
+                machine has none. G43 H&#8202;n is sent as G43.1.
+
+<span class="k">G154 P1-P3</span>      are this machine's G59.1-G59.3. A HAAS
+                goes on to P20; those do not exist here.
+
+<span class="k">Inch / metric</span>   is modal g-code here (G20/G21), not a
+                stored setting. SETTING page, cursor left
+                and right.
+
+<span class="k">EMERGENCY STOP</span>  is a software reset. It is NOT a hardware
+                E-stop and cannot be one from a browser.
+
+<span class="k">$ commands</span>      SHIFT then 5 types the $ character.
+                $X clears an alarm, $H homes.
+
+<span class="k">Homing</span>          is wired but has never been tested on the
+                bench machine, which has no limit switches.</pre>`
 }
+
+const PLACEHOLDER = {}
 
 /** OFFSET is two pages behind one key, so its title has to say which one. */
 const mainTitle = (s) =>
@@ -265,6 +363,9 @@ function mainBody (s) {
   if (s.activePane === 'mdi') return mdiBody(s)
   if (s.activePane === 'alarms') return alarmBody(s)
   if (s.activePane === 'offset') return offsetBody(s)
+  if (s.activePane === 'current') return currentBody(s)
+  if (s.activePane === 'param') return paramBody(s)
+  if (s.activePane === 'help') return helpBody(s)
   return html`<pre class="dim">${PLACEHOLDER[s.activePane] ?? ''}</pre>`
 }
 

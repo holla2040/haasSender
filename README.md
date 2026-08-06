@@ -15,21 +15,23 @@ Target hardware is the companion [grblhal-clearcore](../grblhal-clearcore) proje
 (Teknic ClearCore, 4-axis XYZA). Reference for the control's layout is the 2014
 Mill Operator's Manual in `reference/`; the pendant photos are in `images/`.
 
-Status: **phase 5 of 6** — the whole operator workflow runs. A student imports a
-program, picks it from control memory with LIST PROGRAM, sets work offsets and
-tool lengths on the OFFSET pages, edits blocks word by word in EDIT, types blocks
-in MDI, and runs the job with the run switches, overrides and cycle timers live.
-100 of the 132 keys work and are tinted green; 12 are faded because this control
-can never honour them; the rest draw and say so when pressed. Still to do: Web
-Serial against real USB hardware, which has never been plugged in, and three of
-the thirteen display pages — CURRENT COMMANDS, PARAMETER/DIAGNOSTIC and HELP —
-which switch correctly but are still stubs. See [PLAN.md](PLAN.md).
+Status: **complete except one deferred item.** A student imports a program, picks
+it from control memory with LIST PROGRAM, sets work offsets and tool lengths on
+the OFFSET pages, edits blocks word by word in EDIT, types blocks in MDI, and runs
+the job with the run switches, overrides and cycle timers live. All thirteen
+display pages are real. 103 of the 132 keys work; 12 are faded because this
+control can never honour them; 17 are muted because they are not built yet — and
+pressing any of those 29 says which it is.
+
+**Web Serial is deferred and untested**: no USB board has ever been plugged in,
+and `requestPort()` opens a native picker only a person can answer. It is written
+up in [PLAN.md](PLAN.md) with what to check, rather than assumed to work.
 
 ## Run it
 
 ```
 npm install
-npm test          # 47 tests, no hardware needed
+npm test          # 50 tests, no hardware needed
 npm run dev       # http://localhost:8000
 npm run build     # dist/index.html.gz for the board's SD card
 ```

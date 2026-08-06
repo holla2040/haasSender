@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -320,4 +320,42 @@ test('editBlock alters, inserts after, and deletes one word', () => {
   // A slashed block keeps its slash tight against the block, as it was written.
   assert.equal(editBlock('/G0 Z50', 2, 'alter', 'Z10'), '/G0 Z10')
   assert.equal(editBlock('/G0 Z50', 0, 'delete'), 'G0 Z50')
+})
+
+// ------------------------------------------------------------- current commands
+
+// Captured from the ClearCore, verbatim.
+const REAL_MODAL = 'G0 G54 G17 G21 G90 G94 G49 G98 G50 M5 M9 T0 F600 S1000.'
+
+test('modalGroups breaks a real $G string into named groups', () => {
+  const g = modalGroups(REAL_MODAL)
+  const by = Object.fromEntries(g.map(r => [r.group, r]))
+  assert.equal(by.MOTION.code, 'G0')
+  assert.equal(by.MOTION.meaning, 'rapid positioning')
+  assert.equal(by.UNITS.meaning, 'millimetre')
+  assert.equal(by.DISTANCE.meaning, 'absolute')
+  assert.equal(by['TOOL LENGTH'].meaning, 'cancelled')
+  assert.equal(by.SPINDLE.meaning, 'off')
+  // The word-valued ones keep their value and need no gloss.
+  assert.equal(by.FEED.code, 'F600')
+  assert.equal(by.SPEED.code, 'S1000', 'grbl prints S1000. with a trailing dot')
+  assert.equal(by.TOOL.code, 'T0')
+  // Groups come out in reading order, not the order grbl happened to print them.
+  assert.equal(g[0].group, 'MOTION')
+})
+
+// A page whose whole job is saying what is active must not silently drop a code
+// it does not recognise.
+test('modalGroups shows an unknown code rather than dropping it', () => {
+  const g = modalGroups('G1 G61 G21')
+  const odd = g.find(r => r.code === 'G61')
+  assert.ok(odd, 'G61 must still appear')
+  assert.match(odd.meaning, /not known to this control/)
+  assert.equal(modalGroups('').length, 0)
+  assert.equal(modalGroups(null).length, 0)
+})
+
+test('modalGroups maps the HAAS names onto the extended work offsets', () => {
+  assert.equal(modalGroups('G59.1').find(r => r.group === 'WORK OFFSET').meaning,
+    'G154 P1 on a HAAS')
 })

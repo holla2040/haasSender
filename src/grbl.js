@@ -456,6 +456,98 @@ export function wireProgram (lines, { blockDelete = false, optionStop = false, d
   return { wire, rows }
 }
 
+// --------------------------------------------------------------- modal state
+
+/**
+ * What each modal code means, and which group it belongs to.
+ *
+ * `$G` hands back one flat string — `G0 G54 G17 G21 G90 G94 G49 G98 M5 M9 T0 F600
+ * S1000.` — which is exactly the information a HAAS breaks out on its CURRENT
+ * COMMANDS page and far more use broken out. A student who cannot yet read a
+ * modal string can still read "DISTANCE  G90  absolute".
+ *
+ * Only codes grbl actually reports are listed. Padding this with the rest of the
+ * g-code standard would put codes on the screen this machine will never say.
+ */
+const MODAL = {
+  G0: ['MOTION', 'rapid positioning'],
+  G1: ['MOTION', 'linear feed'],
+  G2: ['MOTION', 'clockwise arc'],
+  G3: ['MOTION', 'counter-clockwise arc'],
+  'G38.2': ['MOTION', 'probe toward, stop on contact'],
+  G80: ['MOTION', 'canned cycle cancelled'],
+  G54: ['WORK OFFSET', 'work coordinate system 1'],
+  G55: ['WORK OFFSET', 'work coordinate system 2'],
+  G56: ['WORK OFFSET', 'work coordinate system 3'],
+  G57: ['WORK OFFSET', 'work coordinate system 4'],
+  G58: ['WORK OFFSET', 'work coordinate system 5'],
+  G59: ['WORK OFFSET', 'work coordinate system 6'],
+  'G59.1': ['WORK OFFSET', 'G154 P1 on a HAAS'],
+  'G59.2': ['WORK OFFSET', 'G154 P2 on a HAAS'],
+  'G59.3': ['WORK OFFSET', 'G154 P3 on a HAAS'],
+  G17: ['PLANE', 'XY'],
+  G18: ['PLANE', 'ZX'],
+  G19: ['PLANE', 'YZ'],
+  G20: ['UNITS', 'inch'],
+  G21: ['UNITS', 'millimetre'],
+  G90: ['DISTANCE', 'absolute'],
+  G91: ['DISTANCE', 'incremental'],
+  G93: ['FEED MODE', 'inverse time'],
+  G94: ['FEED MODE', 'units per minute'],
+  G95: ['FEED MODE', 'units per revolution'],
+  G43: ['TOOL LENGTH', 'offset applied'],
+  'G43.1': ['TOOL LENGTH', 'dynamic offset applied'],
+  G49: ['TOOL LENGTH', 'cancelled'],
+  G98: ['RETURN LEVEL', 'to initial point'],
+  G99: ['RETURN LEVEL', 'to R point'],
+  G50: ['SCALING', 'cancelled'],
+  G51: ['SCALING', 'active'],
+  M0: ['PROGRAM', 'stop'],
+  M1: ['PROGRAM', 'optional stop'],
+  M2: ['PROGRAM', 'end'],
+  M30: ['PROGRAM', 'end and rewind'],
+  M3: ['SPINDLE', 'on, clockwise'],
+  M4: ['SPINDLE', 'on, counter-clockwise'],
+  M5: ['SPINDLE', 'off'],
+  M7: ['COOLANT', 'mist'],
+  M8: ['COOLANT', 'flood'],
+  M9: ['COOLANT', 'off']
+}
+
+const MODAL_ORDER = ['MOTION', 'WORK OFFSET', 'PLANE', 'DISTANCE', 'UNITS',
+  'FEED MODE', 'TOOL LENGTH', 'RETURN LEVEL', 'SCALING', 'SPINDLE', 'COOLANT',
+  'PROGRAM', 'TOOL', 'FEED', 'SPEED']
+
+/**
+ * Break a `$G` modal string into named groups for the CURRENT COMMANDS page.
+ *
+ * A code grbl reports that is not in the table above still gets a row, under its
+ * own code and with no description — better a row saying "the machine says G61
+ * and this control does not know what that is" than a code silently dropped off a
+ * page whose whole job is to say what is active.
+ */
+export function modalGroups (modal) {
+  const rows = new Map()
+  for (const tok of String(modal ?? '').trim().split(/\s+/).filter(Boolean)) {
+    const word = tok.replace(/\.$/, '')                 // grbl prints `S0.`
+    const wordy = { T: 'TOOL', F: 'FEED', S: 'SPEED' }[word[0]]
+    if (wordy && /^[TFS][\d.]+$/.test(word)) {
+      rows.set(wordy, { group: wordy, code: word, meaning: '' })
+      continue
+    }
+    const known = MODAL[word]
+    rows.set(known ? known[0] : word, {
+      group: known ? known[0] : '?',
+      code: word,
+      meaning: known ? known[1] : 'not known to this control'
+    })
+  }
+  return [...rows.values()].sort((a, b) => {
+    const ai = MODAL_ORDER.indexOf(a.group); const bi = MODAL_ORDER.indexOf(b.group)
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
+  })
+}
+
 // ------------------------------------------------------------ word-level edit
 
 /**

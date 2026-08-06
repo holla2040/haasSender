@@ -12,18 +12,20 @@ function keyTpl (key, press) {
 
   const style = key.span ? `grid-column: span ${key.span}` : nothing
   // Three states, because three are true: it works, it can never work, or it is
-  // simply not built yet. The middle one is the easiest to get wrong by omission.
+  // simply not built yet. Now that most of the panel works, the *exceptions* are
+  // what get marked — a working key looks like a key, which is the point.
   const why = UNAVAILABLE.get(key.id)
+  const todo = !why && !VERIFIED.has(key.id)
   const legend = key.lines.join(' ')
   return html`
     <button
       class=${cls('key', key.variant, key.big && 'big', key.shift && 'shift',
                   key.rule && 'rule', key.inline && 'inline',
-                  VERIFIED.has(key.id) && 'done', why && 'na')}
+                  todo && 'todo', why && 'na')}
       style=${style}
       data-key=${key.id}
       title=${why ? `${legend} — ${why}`
-              : VERIFIED.has(key.id) ? legend : `${legend} — not implemented yet`}
+              : todo ? `${legend} — not implemented yet` : legend}
       @pointerdown=${(e) => { e.preventDefault(); press(key.id) }}>
       ${key.corner ? html`<i class="corner ${key.corner}"></i>` : nothing}
       ${key.sup ? html`<span class="sup">${key.sup}</span>` : nothing}
@@ -84,11 +86,11 @@ export const pendant = (state, actions) => {
 
         <div class="pair">
           <div>
-            <button class="pb green done" @click=${() => press('cycle-start')} aria-label="Cycle start"></button>
+            <button class="pb green" @click=${() => press('cycle-start')} aria-label="Cycle start"></button>
             <span class="legend">CYCLE<br>START</span>
           </div>
           <div>
-            <button class="pb red done" @click=${() => press('feed-hold')} aria-label="Feed hold"></button>
+            <button class="pb red" @click=${() => press('feed-hold')} aria-label="Feed hold"></button>
             <span class="legend">FEED<br>HOLD</span>
           </div>
         </div>
