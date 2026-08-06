@@ -24,7 +24,7 @@ Offsets, current commands, alarms and on-control editing are phases 4-5.
 
 ```
 npm install
-npm test          # 25 tests, no hardware needed
+npm test          # 28 tests, no hardware needed
 npm run dev       # http://localhost:8000
 npm run build     # dist/index.html.gz for the board's SD card
 ```
@@ -101,13 +101,33 @@ that produced this project.
 ## Installing on the board
 
 The board serves `/www/index.html.gz` from its SD card — the slot ESP3D-WebUI
-currently occupies. **Back that file up first**; it is the fallback if haasSender
-misbehaves on the bench.
+occupies out of the box. **Back that file up first**; it is the fallback if
+haasSender misbehaves on the bench.
 
+```sh
+npm run build
+
+# back up what is there — the board serves the gzip verbatim, so ask for it
+curl -o www-backup.html.gz -H 'Accept-Encoding: gzip' http://<board>/
+
+# create the directory once, if it is a fresh card
+curl 'http://<board>/sdfiles?action=createdir&filename=www&path=/'
+
+# upload
+SIZE=$(stat -c%s dist/index.html.gz)
+curl -F "path=/www" \
+     -F "/www/index.html.gzS=$SIZE" \
+     -F "myfile=@dist/index.html.gz;filename=/www/index.html.gz" \
+     http://<board>/sdfiles
 ```
-GET  /sdfiles?action=createdir&filename=www&path=/
-POST /sdfiles           multipart, filename /www/index.html.gz
-```
+
+Two details the terse version leaves out: the file part carries the **full
+destination path as its filename**, not just a name, and ESP3D wants a companion
+field named `<path>S` holding the **byte count**. That is the form verified to
+work — dropping either was not tested, so treat them as required. The response is
+the new directory listing; check the size in it matches what you sent. Then load
+`http://<board>/` — served from the board it is same-origin, so it connects
+straight back to the machine it came from, with no `?board=` needed.
 
 ## Licence
 

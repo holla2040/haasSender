@@ -44,9 +44,9 @@ Phases 1 and 2 are done and pushed. 21 of 132 keys do something.
 - Everything on that board is bench-verified **except homing and limit switches**,
   which are built but untested for want of real switches. So `$H` is the one
   mapping in this project that cannot be confirmed against hardware yet.
-- The board currently serves an **older build** of this app from SD `/www`.
-  Reinstall when convenient — see README. (That old build is a good demonstration
-  of the bug the watchdog fixes: it sits at `OFFLINE` with all four axes on `0.000`.)
+- The board serves the **current build** from SD `/www` as of 2026-08-05. The
+  build it replaced is backed up outside the repo; it is the fallback if a new
+  install misbehaves on the bench, and re-uploading it is the same curl command.
 - **The WebSocket can wedge, and only a reboot clears it.** Seen 2026-08-05: port 81
   accepted the connection, negotiated `webui-v3` and sent `currentID:` / `activeID:`
   — then passed nothing in either direction. `$I`, `?` and `[ESP800]json=yes` all
@@ -89,7 +89,11 @@ Small, no design risk, and the first one is a correctness-of-information bug.
       arrives in millimetres. So an inch display has to *convert*, not reformat.
       The first cut printed 20 mm as `20.0000` because the operator picked inches.
       `displayScale()` in `screen.js` now converts, seeded from `$13` at connect.
-- [ ] Reinstall the current build on the board and re-verify from `http://<ip>/`.
+- [x] Reinstall the current build on the board and re-verify from `http://<ip>/`.
+      20,461 bytes to SD `/www`, the old build backed up first. Verified running
+      from the board: it auto-connects back to itself, all three key states draw,
+      RAPID 5% posts its reason, and inch/metric converts. The exact upload
+      command — including the two undocumented multipart details — is in README.
 
 ---
 
@@ -217,6 +221,11 @@ Things that cost real time to discover. Do not re-derive them.
   talk to it directly. Serving from the board is same-origin anyway.
 - **Web Serial needs a secure context.** Available on `localhost`, absent on the
   board-served page over plain HTTP.
+- **The SD upload needs two things the API docs do not mention.** The multipart
+  file part's filename must be the **full destination path** (`/www/index.html.gz`,
+  not `index.html.gz`), and a companion field named `<path>S` must carry the byte
+  count. That combination is verified to work; neither was tested in isolation.
+  Exact command in README.
 - **`$13` and G20/G21 are different questions.** `$13` says what unit `MPos:`
   arrives in; G20/G21 says what the numbers in a *block* mean. Commanding `G20`
   does not change the report — measured on the board. Any inch display therefore
