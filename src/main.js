@@ -2,7 +2,7 @@ import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
-import { screen, displayScale } from './ui/screen.js'
+import { screen, displayScale, HELP_ROWS, helpTotal } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
@@ -89,6 +89,7 @@ const s = {
   // lists, `$F<=` dumps, `$F=` runs — so RECEIVE works over any transport. SEND
   // is the exception: there is no write-file command, only the HTTP endpoint.
   sdFiles: [], sdIndex: 0, listPage: 'memory', receiving: null, boardHost: null,
+  helpRow: 0,
   dial: 0
 }
 
@@ -189,6 +190,15 @@ function press (id) {
     if (id === 'home') { s.editRow = 0; s.editWord = 0; return invalidate() }
     if (id === 'end') { s.editRow = s.program.lines.length - 1; s.editWord = 0; return invalidate() }
     if (['insert', 'alter', 'delete', 'undo'].includes(id)) return editKey(id)
+  }
+
+  // HELP is longer than the pane. PAGE UP and PAGE DOWN turn it, as they turn the
+  // manual on the machine; the arrows step a line for anyone who prefers that.
+  if (s.activePane === 'help') {
+    const d = { 'page-down': HELP_ROWS, 'page-up': -HELP_ROWS, down: 1, up: -1 }[id]
+    if (d !== undefined) { s.helpRow = Math.max(0, (s.helpRow ?? 0) + d); return invalidate() }
+    if (id === 'home') { s.helpRow = 0; return invalidate() }
+    if (id === 'end') { s.helpRow = helpTotal; return invalidate() }
   }
 
   // PARAMETER / DIAGNOSTIC: the cursor walks the machine's settings, read-only.
@@ -1229,6 +1239,7 @@ async function connect () {
     s.link = link.kind.toUpperCase()
     // Only the network transport can write to the card — see sendToCard().
     s.boardHost = kind === 'websocket' ? $('host').value : null
+    store.set(KIND, kind)
     if (kind === 'websocket' && $('host').value) remember.set($('host').value)
     link.send('$I\n')
     link.send('$G\n')
@@ -1291,6 +1302,14 @@ const remember = {
   set: (v) => store.set(REMEMBERED, v)
 }
 
+// Which machine this seat talks to, remembered alongside its address. A bench
+// running USB serial should come back up on USB serial, not on whatever the list
+// happens to start with.
+const KIND = 'haassender.kind'
+const rememberedKind = ['sim', 'websocket', 'serial'].includes(store.get(KIND, null))
+  ? store.get(KIND, null)
+  : null
+
 // Control memory. A HAAS keeps programs on the control, filed by O-number, and
 // LIST PROGRAM is how an operator picks one — so the browser's storage is the
 // nearest honest equivalent to the control's memory.
@@ -1314,7 +1333,12 @@ const wantedBoard =
   remember.get() ||
   ''
 
-if (wantedBoard) {
+// An explicit ?board= names a network target, so it wins; otherwise the seat comes
+// back up on whatever it was last connected to.
+if (rememberedKind) $('kind').value = rememberedKind
+
+if (wantedBoard && (!rememberedKind || rememberedKind === 'websocket' ||
+    new URLSearchParams(location.search).get('board'))) {
   $('host').value = wantedBoard
   $('kind').value = 'websocket'
   // Knowing which machine this is and not connecting to it is the worst of both:

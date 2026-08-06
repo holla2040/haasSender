@@ -326,18 +326,73 @@ const MAIN_TITLE = {
  * The count of keys that can never work is read from `UNAVAILABLE` rather than
  * written down, so this page cannot drift out of step with the keypad.
  */
+/**
+ * HELP, as lines rather than one block, so it can be paged.
+ *
+ * A real control pages its manual with PAGE UP and PAGE DOWN, which is also what
+ * lets this say what it needs to: the page had been cut twice to fit a screen
+ * that had to clear 1080, and the second cut lost things worth knowing. Length is
+ * no longer the constraint — legibility is.
+ *
+ * Each entry is [label, text]; a blank label continues the one above it.
+ */
+const HELP = [
+  ['', 'A HAAS-lookalike control driving a grblHAL machine. The'],
+  ['', 'keypad, the panes and the modes are the real layout. The'],
+  ['', 'machine underneath is not a HAAS. Where that shows:'],
+  ['', ''],
+  ['Handwheel', 'Turn it, or scroll on it. It moves the axis a jog'],
+  ['', 'key last picked — the icon bar shows which — by one'],
+  ['', 'increment a detent. On any page with a cursor it'],
+  ['', 'scrolls that instead. HANDLE CONTROL FEED or SPINDLE'],
+  ['', 'makes it an override knob at 1% a detent.'],
+  ['', ''],
+  ['Faded keys', `${UNAVAILABLE.size} keys can never work on this machine: no chip`],
+  ['', 'conveyor, no tool changer, no programmable coolant,'],
+  ['', 'no spindle orient, and no 5% rapid in grbl. Another'],
+  ['', `${TODO_KEYS} are simply not built yet. Press either and it says`],
+  ['', 'which of the two it is.'],
+  ['', ''],
+  ['Tool offsets', 'This control owns the tool table; the machine has'],
+  ['', 'none at all. G43 H&#8202;n is sent as G43.1 Z<length>, as its'],
+  ['', 'own block, and TOOL OFFSET MEASURE stores the machine'],
+  ['', 'Z where the tip is. A dash means never measured.'],
+  ['', ''],
+  ['Work offsets', 'G154 P1-P3 are this machine\'s G59.1-G59.3. A HAAS'],
+  ['', 'goes on to P20; those do not exist here. PART ZERO'],
+  ['', 'SET stores the machine position into the cell.'],
+  ['', ''],
+  ['Inch / metric', 'Modal g-code here (G20/G21), not a stored setting,'],
+  ['', 'so a program that commands either changes it too.'],
+  ['', 'SETTING page, cursor left and right.'],
+  ['', ''],
+  ['The card', 'RECEIVE lists the machine\'s SD card and copies a file'],
+  ['', 'into control memory. CYCLE START on that page runs it'],
+  ['', 'on the board itself, off its own card — the only way'],
+  ['', 'to run one too big to copy. SEND writes back.'],
+  ['', ''],
+  ['$ commands', 'SHIFT then 5 types the $ character. $X clears an'],
+  ['', 'alarm, $H homes. The ALARMS page says which is which.'],
+  ['', ''],
+  ['EMERGENCY', 'A software reset. It is NOT a hardware E-stop and'],
+  ['STOP', 'cannot be one from a browser.'],
+  ['', ''],
+  ['Homing', 'Wired, but never tested: the bench machine has no'],
+  ['', 'limit switches. It says so when pressed.']
+]
+
+/** How many lines of HELP the pane shows at once. */
+export const HELP_ROWS = 10
+
 function helpBody (s) {
-  return html`<pre>A HAAS-lookalike control driving a grblHAL machine. The keypad,
-panes and modes are the real layout. Where it differs:
-<span class="k">Handwheel</span>  turn it or scroll — moves the axis a jog key last picked,
-           or scrolls any page with a cursor.
-<span class="k">Faded keys</span> ${UNAVAILABLE.size} can never work here, ${TODO_KEYS} are not built — press one.
-<span class="k">Tools</span>      this control owns the table; G43 H&#8202;n goes out as G43.1.
-           G154 P1-P3 are this machine's G59.1-G59.3.
-<span class="k">Units</span>      modal g-code, not a stored setting — SETTING page.
-<span class="k">$ keys</span>     SHIFT then 5 types $. $X clears an alarm, $H homes.
-<span class="k">E-STOP</span>     software reset, NOT a hardware E-stop.</pre>`
+  const from = helpFrom(s)
+  return html`<pre>${HELP.slice(from, from + HELP_ROWS).map(([label, text]) => html`<div
+    ><span class="k">${(label + '              ').slice(0, 14)}</span>${text}</div>`)}</pre>`
 }
+
+/** Clamped so PAGE DOWN cannot walk off the end and leave a blank page. */
+export const helpFrom = (s) => Math.max(0, Math.min(s.helpRow ?? 0, HELP.length - HELP_ROWS))
+export const helpTotal = HELP.length
 
 const PLACEHOLDER = {}
 
@@ -347,7 +402,11 @@ const mainTitle = (s) =>
     ? (s.offsetPage === 'tool' ? 'TOOL OFFSET' : 'WORK OFFSET')
     : s.activePane === 'list'
       ? (s.listPage === 'sd' ? 'MACHINE SD CARD' : 'LIST PROGRAM')
-      : (MAIN_TITLE[s.activePane] ?? '')
+      // HELP is longer than the pane, so the title carries the position — it
+      // costs no row, and without it nothing says there is more below.
+      : s.activePane === 'help'
+        ? `HELP  ${helpFrom(s) + 1}-${Math.min(helpFrom(s) + HELP_ROWS, helpTotal)} / ${helpTotal}`
+        : (MAIN_TITLE[s.activePane] ?? '')
 
 function mainBody (s) {
   if (s.activePane === 'position') return positionBody(s)

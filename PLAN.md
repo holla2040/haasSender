@@ -254,6 +254,15 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 ## Still open
 
+- [x] **HELP pages with PAGE UP / PAGE DOWN**, as a control's manual does. Length
+      stopped being the constraint the moment it could scroll, so the text cut
+      twice to fit 1080 is back and fuller than it ever was — 42 lines, ten at a
+      time. The title carries the position (`HELP 11-20 / 42`) because that costs
+      no row and nothing else would say there is more below.
+- [x] **The transport choice is remembered**, alongside the address it already
+      kept. A bench on USB serial comes back up on USB serial. An explicit
+      `?board=` still wins, being the more specific instruction.
+
 - [x] **Fits a 1080p screen.** 1886 × 1056 at `--u` clamped to 14px, so it clears
       1920 × 1080 in fullscreen with 34px and 24px to spare. The keys and the
       left-hand column are untouched; the height came out of the display, the
