@@ -424,7 +424,10 @@ export const screen = (s) => html`
     ${pane('icons', null, html`<pre class="k">${
       ['INC ' + s.increment, s.shifted && 'SHIFT',
         s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
-        s.blockDelete && 'BLK DEL', s.jogLock && 'JOG LOCK'].filter(Boolean).join('   ')
+        s.blockDelete && 'BLK DEL',
+        s.jogLock && (s.latched !== null ? 'JOG LOCK ▶ ' + 'XYZA'[s.latched] : 'JOG LOCK'),
+        s.handleMode !== 'jog' && 'HANDLE ' + s.handleMode.toUpperCase()]
+        .filter(Boolean).join('   ')
     }</pre>`, false)}
 
     ${pane('input', null, html`<pre>${s.input ? '> ' + s.input : ''}<span class="k">${s.input ? '_' : ''}</span></pre>`, false)}

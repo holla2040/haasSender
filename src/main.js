@@ -75,6 +75,9 @@ const s = {
   // The machine's own settings, as `$$` reports them. Read-only here: writing a
   // setting is a different kind of act from writing a work offset.
   settings: {}, paramRow: 0,
+  // What the jog handle does, and which axis JOG LOCK has latched into a
+  // continuous move. Both are front-panel state, not the machine's.
+  handleMode: 'jog', latched: null,
   dial: 0
 }
 
@@ -212,6 +215,7 @@ function press (id) {
       streamer?.reset()
       s.job = null
       s.cycleStartedAt = null      // an abandoned cycle is not a part
+      s.latched = null             // a soft reset ends any latched jog too
       s.alarm = id === 'estop' ? 'EMERGENCY STOP (software)' : null
       s.message = id === 'estop' ? 'this is not a hardware E-stop' : ''
       return invalidate()
@@ -237,7 +241,18 @@ function press (id) {
     case 'dry-run': return toggleSwitch('dryRun', 'DRY RUN')
     case 'single-block': return toggleSwitch('singleBlock', 'SINGLE BLOCK')
 
-    case 'jog-lock': s.jogLock = !s.jogLock; return invalidate()
+    case 'jog-lock':
+      s.jogLock = !s.jogLock
+      // Turning the lock off with a move latched would leave the machine running
+      // and no key that stops it. Cancel first.
+      if (!s.jogLock && s.latched !== null) { link?.sendRealtime(0x85); s.latched = null }
+      s.message = `JOG LOCK ${s.jogLock ? 'ON — a jog key starts a continuous move' : 'OFF'}`
+      return invalidate()
+
+    // The handle stops jogging and becomes an override knob, as it does on the
+    // machine. Pressing the same key again gives it back to jogging.
+    case 'handle-feed': return setHandleMode('feed', 'HANDLE CONTROL FEED')
+    case 'handle-spindle': return setHandleMode('spindle', 'HANDLE CONTROL SPINDLE')
 
     // ZERO RETURN. `$H` is the one mapping in this project that cannot be
     // confirmed against the bench machine — homing is built into that firmware but
@@ -677,15 +692,71 @@ function send (line) {
   link.send('$G\n')
 }
 
+/**
+ * How far a latched jog runs. grbl has no "jog until I say stop", so continuous
+ * jog is a move long enough to outlast the operator, cancelled with `0x85`.
+ *
+ * The machine's own declared travel (`$130`+) is the right length: it is as far
+ * as the axis can go, so the move ends where the machine would have stopped
+ * anyway. Falling back to a constant would either stop short on a big machine or
+ * ask a small one to travel further than it can.
+ */
+function jogTravel (axis) {
+  const declared = Number(s.settings[130 + axis])
+  return Number.isFinite(declared) && declared > 0 ? declared : 200
+}
+
 function jogAxis (axis, dir) {
   if (!link) return
+
+  // JOG LOCK: the key latches. Press once for a continuous move, press any jog
+  // key again to stop it — which is `0x85`, jog cancel, not a reset, so the
+  // machine decelerates properly and keeps its position.
+  if (s.jogLock) {
+    if (s.latched !== null) {
+      link.sendRealtime(0x85)
+      s.latched = null
+      s.message = 'jog cancelled'
+      return invalidate()
+    }
+    const distance = (jogTravel(axis) * dir).toFixed(3)
+    link.send(`$J=G91 F${JOG_FEED[s.units]} ${'XYZA'[axis]}${distance}\n`)
+    s.latched = axis
+    s.message = `${'XYZA'[axis]} jogging — press a jog key to stop`
+    return invalidate()
+  }
+
   const step = (increment() * dir).toFixed(4)
   link.send(`$J=G91 F${JOG_FEED[s.units]} ${'XYZA'[axis]}${step}\n`)
 }
 
+function setHandleMode (mode, label) {
+  s.handleMode = s.handleMode === mode ? 'jog' : mode
+  s.message = s.handleMode === mode
+    ? `${label} — the handle now trims the override, 1% a click`
+    : 'the handle jogs again'
+  return invalidate()
+}
+
+/** An override byte, plus a request for a report so the readout follows at once. */
+function override (byte) {
+  link?.sendRealtime(byte)
+  link?.sendRealtime(0x3F)
+}
+
+/**
+ * The handle. Normally it jogs; HANDLE CONTROL FEED and HANDLE CONTROL SPINDLE
+ * turn it into an override knob, as they do on the machine.
+ *
+ * A click is **one percent**, not ten: grbl has 0x93/0x94 and 0x9C/0x9D for that,
+ * measured on the board — three clicks of 0x93 read back `Ov:103`. Ten percent a
+ * click would make the handle useless for the trimming it exists to do.
+ */
 function jogWheel (dir) {
   s.dial = (s.dial + dir * 18) % 360
   invalidate()
+  if (s.handleMode === 'feed') return override(dir > 0 ? 0x93 : 0x94)
+  if (s.handleMode === 'spindle') return override(dir > 0 ? 0x9C : 0x9D)
   jogAxis(0, dir)     // the dial jogs the axis the operator has selected; X for now
 }
 
@@ -910,6 +981,10 @@ function applyStatus (st) {
     s.spindleDir = st.accessory.includes('S') ? 1 : st.accessory.includes('C') ? -1 : 0
     s.coolant = st.accessory.includes('F')
   }
+  // A latched jog that ran to the end of its travel, or was cancelled, is over —
+  // the lamp must not go on claiming the machine is still moving.
+  if (s.latched !== null && st.state !== 'Jog') s.latched = null
+
   if (st.state === 'Alarm') { if (!s.alarm) s.alarm = 'ALARM' } else if (st.state !== 'Alarm') {
     if (s.alarm?.startsWith('ALARM') && st.state === 'Idle') s.alarm = null
   }
@@ -946,7 +1021,10 @@ async function connect () {
     link.send('$I\n')
     link.send('$G\n')
     link.send('$#\n')
-    link.send('$13\n')      // are reports in millimetres or inches?
+    // Everything the machine will tell us about itself. `$$` costs one dump of
+    // ~40 lines at connect and pays for the PARAMETER page, `$13` (which unit
+    // `MPos:` arrives in) and `$130`+ (how far a latched jog may run).
+    link.send('$$\n')
   } catch (e) {
     $('link').textContent = e.message
     $('link').className = 'bad'

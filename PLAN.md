@@ -28,12 +28,11 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 ## Where it stands
 
 All six phases are done except one item that needs a person at the bench. Of 132
-keys: **107 work**, **13 can never work** on this control, **12 are not built
+keys: **110 work**, **13 can never work** on this control, **9 are not built
 yet**. All thirteen display pages are real.
 
-The twelve unbuilt: POWER UP RESTART, F1-F4, JOG LOCK, the two HANDLE CONTROL
-keys, ZERO RETURN's ALL and SINGLE (homing, untestable without limit switches),
-and RS-232 SEND / RECEIVE.
+The nine unbuilt: POWER UP RESTART, F1-F4, ZERO RETURN's ALL and SINGLE (homing,
+untestable without limit switches), and SEND / RECEIVE.
 
 **The one thing left is Web Serial**, which has never seen a USB board and cannot
 be tested without someone plugging one in — see phase 6. It is deferred, not
@@ -251,6 +250,16 @@ The fiddliest behaviour in the project. Budget accordingly.
       Offsets, tool lengths, MDI blocks and EDIT words all go in this way.
 
 ## Still open
+
+- [x] **JOG LOCK** latches a jog key into a continuous move — `$J=` for the axis's
+      declared travel (`$130`+, so the move ends where the machine would have
+      stopped anyway), cancelled with `0x85` on the next press. Turning the lock
+      off mid-move cancels too, or the machine would be running with no key that
+      stops it. Watched X run 0 → 33.666 and brake.
+- [x] **HANDLE CONTROL FEED / SPINDLE** turn the handle into an override knob, and
+      **a click is one percent, not ten** — grbl has `0x93`/`0x94` and
+      `0x9C`/`0x9D` for that, measured on the board. Ten percent a click would make
+      the handle useless for the trimming it exists to do.
 
 - [x] **All thirteen display pages are real.** The last three landed together:
       - **CURRENT COMMANDS** breaks the `$G` modal string into named groups with

@@ -252,6 +252,11 @@ export const VERIFIED = new Set([
   'rapid-25', 'rapid-50', 'rapid-100',
   // flood toggle 0xA0 — seen turning `A:F` on and off on the board
   'coolant',
+  // the handle as an override knob, 1% a click: four clicks read back Ov:104
+  'handle-feed', 'handle-spindle',
+  // JOG LOCK latches a jog key into a continuous move and the next press cancels
+  // it with 0x85 — watched X run from 0 to 33.666 and stop under its own brakes
+  'jog-lock',
   // M3/M4/M5, covered by the deferred M-code test and seen driving the spindle pane
   'spindle-cw', 'spindle-stop', 'spindle-ccw',
   // soft reset 0x18
