@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram } from '../src/grbl.js'
+import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -198,4 +198,55 @@ test('Streamer refuses a line longer than the buffer instead of stalling forever
   assert.equal(s.error.code, 11)
   assert.equal(s.error.line, 1)
   assert.match(s.error.text, /longer than the controller's 32-byte buffer/)
+})
+
+// The G154 P1-P3 mapping was measured on the ClearCore, not read off a datasheet:
+// `G10 L2 P7 X1.234` moved G59.1 and `P9 Y5.678` moved G59.3. Lock it in — a
+// wrong P-number silently writes a work zero into the wrong coordinate system.
+test('the offset table maps HAAS names onto the P-numbers the board honours', () => {
+  assert.equal(WCS.length, 9)
+  assert.deepEqual(WCS.map(w => w.p), [1, 2, 3, 4, 5, 6, 7, 8, 9])
+  assert.deepEqual(WCS.find(w => w.name === 'G154 P1'), { name: 'G154 P1', report: 'G59.1', p: 7 })
+  assert.deepEqual(WCS.find(w => w.name === 'G154 P3'), { name: 'G154 P3', report: 'G59.3', p: 9 })
+  // Every name the board reports under is one $# actually sends.
+  assert.deepEqual(WCS.map(w => w.report),
+    ['G54', 'G55', 'G56', 'G57', 'G58', 'G59', 'G59.1', 'G59.2', 'G59.3'])
+})
+
+test('setWorkOffset writes one axis, at a precision worth having', () => {
+  assert.equal(setWorkOffset(3, 'X', 20), 'G10 L2 P3 X20.0000')
+  assert.equal(setWorkOffset(7, 'Z', -12.5), 'G10 L2 P7 Z-12.5000')
+  // 30 mm in inches — the value PART ZERO SET sends when the control is in G20.
+  assert.equal(setWorkOffset(4, 'Y', 30 / 25.4), 'G10 L2 P4 Y1.1811')
+})
+
+// DIST TO GO is computed, not reported, so the important half is knowing when it
+// cannot be computed. A plausible wrong number here is worse than dashes: it is
+// the readout an operator uses to judge whether to reach into the machine.
+test('distanceToGo admits when the block does not say', () => {
+  const at = { mpos: [10, 0, 0, 0] }
+  assert.equal(distanceToGo('M8', at), null, 'no axis words is not a move')
+  assert.equal(distanceToGo('', at), null)
+  assert.equal(distanceToGo(null, at), null)
+  assert.equal(distanceToGo('G1 X50', { ...at, absolute: false }), null,
+    'incremental target depends on where the move began')
+})
+
+test('distanceToGo measures from the work offset, in the report unit', () => {
+  assert.deepEqual(distanceToGo('G1 X50 F600', { mpos: [10, 0, 0, 0] }), [40, 0, 0, 0])
+  // A work offset shifts the target onto the machine's own axis.
+  assert.deepEqual(distanceToGo('G0 X50', { mpos: [10, 0, 0, 0], wco: [5, 0, 0, 0] }),
+    [45, 0, 0, 0])
+  // An inch program against a millimetre report: 2" is 50.8 mm.
+  assert.deepEqual(distanceToGo('G1 X2', { mpos: [0.8, 0, 0, 0], scale: 25.4 }),
+    [50, 0, 0, 0])
+  // Only the axes the block names move; the rest are already there.
+  assert.deepEqual(distanceToGo('G1 Y-3', { mpos: [7, 1, 0, 0] }), [0, -4, 0, 0])
+})
+
+test('distanceToGo does not mistake a letter inside another word for an axis', () => {
+  // The Z here belongs to nothing — there is no number after it — and the X in
+  // G91.1 is not an axis word either.
+  assert.equal(distanceToGo('G17 G40 G49', { mpos: [0, 0, 0, 0] }), null)
+  assert.deepEqual(distanceToGo('G53 X10', { mpos: [0, 0, 0, 0] }), [10, 0, 0, 0])
 })

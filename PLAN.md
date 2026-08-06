@@ -160,23 +160,33 @@ touching anything that is not on the pendant.
 
 The phase with real design in it. Do this before phase 5.
 
-- [ ] **Work offsets pane** — G54–G59 plus G59.1–G59.3 (which back HAAS
-      `G154 P1`–`P3`). Read with `$#`, write with `G10 L2 P<n> X.. Y.. Z.. A..`.
-- [ ] **`[PART ZERO SET]`** — write current machine position into the highlighted
-      work offset. The single most-used setup key on a real HAAS.
+- [x] **Work offsets pane** — nine coordinate systems with a cell cursor, read from
+      `$#` and written with `G10 L2 P<n>`. The active one is marked. `G154 P1`–`P3`
+      are `G59.1`–`G59.3`, and **the P-numbers were measured on the board**, not
+      assumed: `G10 L2 P7` moved `G59.1`, `P9` moved `G59.3`.
+- [x] **`[PART ZERO SET]`** — stores the machine position into the highlighted
+      cell. It converts: `MPos:` arrives in the report unit and `G10 L2` reads the
+      *modal* unit, so in inch mode 30 mm goes out as `1.1811` and reads back as
+      30.000 mm. Getting that wrong puts a work zero 25.4× out.
 - [ ] **Tool offsets pane** — a tool table the *sender* owns, because the board has
       `N_TOOLS 0` and base GRBL has only dynamic TLO. Persist it in browser storage.
 - [ ] **`G43 H<n>` → `G43.1 Z-<offset>`** translation on the outgoing stream, so
       programs written for a HAAS run on a board with no tool table.
 - [ ] **`[TOOL OFFSET MEASURE]`** — record tool length during setup.
-- [ ] Data entry into the active (white) pane: type a value, `[WRITE/ENTER]`
-      commits. This is the interaction the whole 13-pane model exists for.
+- [x] Data entry into the active (white) pane: type a value, `[WRITE/ENTER]`
+      commits. `WRITE/ENTER` is context-sensitive — on a data-entry pane it writes
+      the cell, anywhere else it is MDI. A value that is not a number is refused
+      rather than silently written as zero.
 - [ ] Active Codes pane from `$G` (already parsed), Active Tool, Coolant panes.
-- [ ] `[ZERO RETURN]` group: `ALL` → `$H`, `HOME G28` → `G28`, `ORIGIN`, `SINGLE`.
-      **`$H` cannot be confirmed on this board** — homing is untested there. Wire it,
-      test against the simulator, and mark it unverified until switches exist.
-- [ ] DIST TO GO — compute from the running block's target.
-- [ ] OPERATOR readout — a sender-side zeroable display; currently mirrors machine.
+- [x] `[ZERO RETURN]` group wired: `ALL` → `$H`, `HOME G28` → `G28`, `SINGLE` asks
+      which axis then sends `$H<axis>`, `ORIGIN` zeroes the OPERATOR readout.
+      **The homing keys are NOT in `VERIFIED`** and say so when pressed — this board
+      has no limit switches, so `$H` is the one mapping in the project that cannot
+      be confirmed. `ORIGIN` is verified; it needs no machine.
+- [x] DIST TO GO — computed from the running block, and **null when the block does
+      not say**: no axis words, or `G91`, where the target depends on where the move
+      began. Dashes rather than a plausible zero.
+- [x] OPERATOR readout — `ORIGIN` zeroes it, and it is the sender's own.
 
 ## Phase 5 — Edit mode and MDI
 
@@ -258,6 +268,11 @@ Things that cost real time to discover. Do not re-derive them.
   not `index.html.gz`), and a companion field named `<path>S` must carry the byte
   count. That combination is verified to work; neither was tested in isolation.
   Exact command in README.
+- **`Bf:` counts the block under the tool as still queued.** So `acked − queued` is
+  the index of the block *being executed*, not of the last one finished. Taking a
+  further 1 off — which the running-block highlight did from phase 2 — highlights
+  the previous block for an entire program. DIST TO GO is what exposed it: it read
+  zero on an axis the machine was visibly moving.
 - **`Ov:` and `A:` are missing from most reports, and absence is not a value.**
   grblHAL leaves them out of compact reports and refreshes them every so often;
   measured on the board, flood stayed on through reports carrying no `A:` at all.

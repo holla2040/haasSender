@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit-html'
+import { WCS } from '../grbl.js'
 
 // The control display: one fixed layout of thirteen panes, per figure F2.27 and
 // section 2.3.4 of the 2014 Mill Operator's Manual. The panes do not change; what
@@ -35,11 +36,11 @@ export const clock = (ms) => {
     .map(v => String(v).padStart(2, '0')).join(':')
 }
 
-const droRow = (label, values, s) => {
+const droRow = (label, values, s, unknown = false) => {
   const k = displayScale(s.reportUnits, s.units)
   const inches = s.units === 'IN'
   return html`
-    <b>${label}</b>${values.map(v => html`<span>${fmt(v * k, inches, s.stale)}</span>`)}`
+    <b>${label}</b>${values.map(v => html`<span>${fmt(v * k, inches, s.stale || unknown)}</span>`)}`
 }
 
 /** The four readouts a HAAS shows on the POSITION page. */
@@ -51,7 +52,8 @@ function positionBody (s) {
       ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), s)}
       ${droRow('WORK ' + s.wcs, work, s)}
       ${droRow('MACHINE', s.mpos, s)}
-      ${droRow('DIST TO GO', s.dtg, s)}
+      ${/* null when the running block cannot say — dashes, not a hopeful zero */''}
+      ${droRow('DIST TO GO', s.dtg ?? [0, 0, 0, 0], s, s.dtg === null)}
     </div>`
 }
 
@@ -96,6 +98,33 @@ G21 changes it too — this pane follows the
 machine rather than the other way round.</span></pre>`
 }
 
+/**
+ * The OFFSET page: nine work coordinate systems, four axes each, with a cell
+ * cursor. This is the pane the active-pane model exists for — it is the first
+ * one an operator types into.
+ *
+ * Values arrive from `$#` in the machine's report unit and are converted for
+ * display exactly as the DRO is, so switching to inches moves these too.
+ */
+function offsetBody (s) {
+  const k = displayScale(s.reportUnits, s.units)
+  const inches = s.units === 'IN'
+  return html`<pre>          ${AXES.map(a => ('       ' + a).slice(-9)).join('')}
+${WCS.map((w, row) => {
+    const v = s.offsets[w.report] ?? [0, 0, 0, 0]
+    // The one the machine is actually in, per `$G`. An operator setting a part
+    // zero into G55 while the program runs G54 is a scrapped part.
+    const label = (w.report === s.wcs ? '*' : ' ') + w.name
+    return html`<div>${(label + '        ').slice(0, 9)}${AXES.map((a, col) => html`<span
+      class=${row === s.offsetRow && col === s.offsetCol ? 'cur' : ''}
+      >${('        ' + fmt(v[col] * k, inches, s.stale)).slice(-9)}</span>`)}</div>`
+  })}
+<span class="dim">Cursor moves the cell. Type a value and press WRITE/ENTER
+to set it, or PART ZERO SET to store the current machine
+position. G154 P1-P3 are this control's G59.1-G59.3 —
+a HAAS goes on to P20, and those do not exist here.</span></pre>`
+}
+
 /** Control memory: what LIST PROGRAM shows, filed by O-number. */
 function listBody (s) {
   if (!s.programs.length) {
@@ -130,7 +159,6 @@ const MAIN_TITLE = {
 }
 
 const PLACEHOLDER = {
-  offset: 'OFFSET — phase 4',
   current: 'CURRENT COMMANDS — phase 4',
   alarms: 'ALARMS — phase 4',
   param: 'PARAMETER / DIAGNOSTIC',
@@ -142,6 +170,7 @@ function mainBody (s) {
   if (s.activePane === 'program') return programBody(s)
   if (s.activePane === 'setting') return settingBody(s)
   if (s.activePane === 'list') return listBody(s)
+  if (s.activePane === 'offset') return offsetBody(s)
   return html`<pre class="dim">${PLACEHOLDER[s.activePane] ?? ''}</pre>`
 }
 

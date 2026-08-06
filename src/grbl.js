@@ -88,6 +88,76 @@ export function parseOpt (optValue) {
 /** Pull just the RX buffer size out of an `[OPT:…]` value. */
 export const rxBufferFromOpt = (optValue) => parseOpt(optValue).rx
 
+// -------------------------------------------------------------------- offsets
+
+/**
+ * The work coordinate systems this control offers, in the order the OFFSET page
+ * lists them, with the name a HAAS operator knows them by.
+ *
+ * The last three are the interesting ones. A HAAS calls them `G154 P1`–`P3` and a
+ * student will look for that name; grbl has no `G154`, but grblHAL reports nine
+ * coordinate systems and `G59.1`–`G59.3` sit exactly where `G154 P1`–`P3` do. The
+ * P-number for writing them was measured on the ClearCore rather than assumed:
+ * `G10 L2 P7` moved `G59.1` and `P9` moved `G59.3`.
+ *
+ * A real HAAS goes on to `G154 P20` and beyond. Showing three and saying so beats
+ * drawing twenty rows that cannot be written.
+ */
+export const WCS = [
+  { name: 'G54', report: 'G54', p: 1 },
+  { name: 'G55', report: 'G55', p: 2 },
+  { name: 'G56', report: 'G56', p: 3 },
+  { name: 'G57', report: 'G57', p: 4 },
+  { name: 'G58', report: 'G58', p: 5 },
+  { name: 'G59', report: 'G59', p: 6 },
+  { name: 'G154 P1', report: 'G59.1', p: 7 },
+  { name: 'G154 P2', report: 'G59.2', p: 8 },
+  { name: 'G154 P3', report: 'G59.3', p: 9 }
+]
+
+/**
+ * `G10 L2 P<n> <axis><value>` — write one axis of one work offset.
+ *
+ * L2 sets the offset from machine zero, which is what the OFFSET page edits. The
+ * value goes out in the *modal* unit (G20/G21), so a caller holding millimetres
+ * from `MPos:` while the control is in inches must convert before calling.
+ */
+export const setWorkOffset = (p, axis, value) =>
+  `G10 L2 P${p} ${axis}${Number(value).toFixed(4)}`
+
+/**
+ * DIST TO GO — how far the block under the tool still has to travel, per axis.
+ *
+ * grbl does not report this, so it is worked out from the block itself: an
+ * absolute target, expressed in the modal unit and relative to the active work
+ * offset, minus where the machine is now.
+ *
+ * Returns **null** whenever that cannot be known, and the display shows dashes
+ * rather than a number. Two cases: a block with no axis words is not a move, and
+ * an incremental one (`G91`) has a target that depends on where the move began,
+ * which is not in the block. Guessing either would put a plausible wrong number
+ * on the one readout an operator uses to judge whether to reach into the machine.
+ *
+ * `scale` converts the block's modal unit into the unit `MPos:` arrives in;
+ * `wco` shifts the work-coordinate target onto the machine's own axis.
+ */
+export function distanceToGo (blockText, { mpos, wco = [0, 0, 0, 0], absolute = true, scale = 1 }) {
+  if (!blockText || !absolute) return null
+
+  const out = [0, 0, 0, 0]
+  let found = false
+  'XYZA'.split('').forEach((letter, i) => {
+    // A word is the letter and its number — not the letter inside a word like
+    // `G91.1`, and not one hiding in what is left of a stripped comment.
+    const m = new RegExp(`(?:^|[^A-Za-z0-9.])${letter}\\s*([-+]?(?:\\d+\\.?\\d*|\\.\\d+))`, 'i')
+      .exec(blockText)
+    if (!m) return
+    found = true
+    out[i] = (Number(m[1]) * scale + (wco[i] ?? 0)) - (mpos[i] ?? 0)
+  })
+  return found ? out : null
+}
+
 // ------------------------------------------------------------------ code tables
 
 // Only the codes a student can realistically provoke. Unlisted codes fall back to

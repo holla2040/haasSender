@@ -1,8 +1,8 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, describeAlarm, describeError } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError } from './grbl.js'
 import { pendant } from './ui/pendant.js'
-import { screen } from './ui/screen.js'
+import { screen, displayScale } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
@@ -37,7 +37,10 @@ const REALTIME = {
 const s = {
   mode: 'SETUP', fn: 'JOG',
   activePane: 'position',
-  mpos: [0, 0, 0, 0], wco: [0, 0, 0, 0], dtg: [0, 0, 0, 0], operator: [0, 0, 0, 0],
+  // `dtg` is null whenever the running block does not say how far is left — see
+  // distanceToGo(). The DRO shows dashes for it rather than a plausible zero.
+  mpos: [0, 0, 0, 0], wco: [0, 0, 0, 0], dtg: null, operator: [0, 0, 0, 0],
+  pendingHomeAxis: false,
   // Two different units, and conflating them is a real bug rather than a nicety.
   // `units` is the modal programming unit from G20/G21 — what the numbers in a
   // block mean, and what the DRO is labelled in. `reportUnits` is what `MPos:`
@@ -58,6 +61,9 @@ const s = {
   // The timers pane. `cycleStartedAt` is wall-clock rather than a tick count so a
   // throttled background tab cannot make a cycle look shorter than it was.
   cycleStartedAt: null, cycleMs: 0, lastCycleMs: 0, parts: 0,
+  // The work offsets, keyed by the name `$#` reports them under, and the cell the
+  // OFFSET page's cursor is on.
+  offsets: {}, offsetRow: 0, offsetCol: 0,
   dial: 0
 }
 
@@ -99,6 +105,23 @@ function press (id) {
   // grbl has no such store, so changing it means commanding the modal pair.
   if (s.activePane === 'setting' && (id === 'left' || id === 'right')) {
     return send(s.units === 'IN' ? 'G21' : 'G20')
+  }
+
+  // OFFSET: the cursor walks a grid of cells, one per axis per coordinate system.
+  if (s.activePane === 'offset') {
+    const dr = { up: -1, down: 1, 'page-up': -5, 'page-down': 5 }[id]
+    const dc = { left: -1, right: 1 }[id]
+    if (dr !== undefined) {
+      s.offsetRow = Math.max(0, Math.min(WCS.length - 1, s.offsetRow + dr))
+      return invalidate()
+    }
+    if (dc !== undefined) {
+      s.offsetCol = Math.max(0, Math.min(3, s.offsetCol + dc))
+      return invalidate()
+    }
+    if (id === 'home') { s.offsetRow = 0; s.offsetCol = 0; return invalidate() }
+    if (id === 'end') { s.offsetRow = WCS.length - 1; return invalidate() }
+    if (id === 'part-zero-set') return partZeroSet()
   }
 
   // LIST PROGRAM: the cursor walks control memory.
@@ -144,6 +167,12 @@ function press (id) {
     case 'spindle-ccw': return send('M4 S1000')
     case 'spindle-stop': return send('M5')
 
+    case 'part-zero-set':
+      // Handled above when the OFFSET page is up. Anywhere else there is no cell
+      // to write, so say where it works rather than do nothing.
+      s.message = 'press OFFSET first — PART ZERO SET writes into the offset page'
+      return invalidate()
+
     case 'select-program': return selectProgram()
     case 'erase-program': return eraseProgram()
 
@@ -153,12 +182,43 @@ function press (id) {
     case 'single-block': return toggleSwitch('singleBlock', 'SINGLE BLOCK')
 
     case 'jog-lock': s.jogLock = !s.jogLock; return invalidate()
-    case 'zero-all': return send('$H')
-    case 'zero-home': return send('G28')
 
-    case 'cancel': s.input = ''; return invalidate()
+    // ZERO RETURN. `$H` is the one mapping in this project that cannot be
+    // confirmed against the bench machine — homing is built into that firmware but
+    // has never been exercised, for want of real limit switches. It works against
+    // the simulator, and it says as much rather than implying otherwise.
+    case 'zero-all':
+      s.message = 'homing — untested on this machine, no limit switches fitted'
+      return send('$H')
+    case 'zero-home': return send('G28')
+    case 'zero-single':
+      // A HAAS homes one axis at a time here, and asks which. grblHAL takes the
+      // axis letter after `$H`.
+      s.pendingHomeAxis = true
+      s.message = 'ZERO SINGLE AXIS — press X, Y, Z or A'
+      return invalidate()
+    case 'zero-origin':
+      // Zeroes the sender-side OPERATOR readout — a scratch measurement a student
+      // takes without touching a work offset. It is ours, so it needs no machine.
+      s.operator = [...s.mpos]
+      s.message = 'OPERATOR position zeroed'
+      return invalidate()
+
+    case 'cancel':
+      if (s.pendingHomeAxis) s.message = 'cancelled'
+      s.input = ''
+      s.pendingHomeAxis = false
+      return invalidate()
     case 'enter': return commitInput()
     case 'space': s.input += ' '; return invalidate()
+  }
+
+  // ZERO RETURN → SINGLE asked which axis; this is the answer.
+  if (s.pendingHomeAxis && /^alpha-[xyza]$/.test(id)) {
+    const axis = id.slice(-1).toUpperCase()
+    s.pendingHomeAxis = false
+    s.message = `homing ${axis} — untested on this machine, no limit switches fitted`
+    return send('$H' + axis)
   }
 
   // Alpha and numeric keys type into the input bar.
@@ -175,6 +235,43 @@ function typedChar (id) {
   if (id === 'paren-open') return '('
   if (id === 'paren-close') return ')'
   return null
+}
+
+// ---------------------------------------------------------------- work offsets
+
+const AXIS_LETTERS = ['X', 'Y', 'Z', 'A']
+
+/**
+ * Write one cell of the OFFSET page.
+ *
+ * The value is in whatever unit the control is displaying, and `G10 L2` reads its
+ * words in the *modal* unit — which is the same thing, because the SETTING page
+ * keeps the two in step. `$#` is re-read afterwards rather than the table being
+ * patched locally: the machine is the record, and if the write were rejected a
+ * locally-patched table would show an offset the machine does not have.
+ */
+function writeOffset (value) {
+  const w = WCS[s.offsetRow]
+  const axis = AXIS_LETTERS[s.offsetCol]
+  send(setWorkOffset(w.p, axis, value))
+  link?.send('$#\n')
+  s.message = `${w.name} ${axis} set to ${Number(value).toFixed(4)}`
+  invalidate()
+}
+
+/**
+ * PART ZERO SET — the most-used setup key on a real HAAS. Stores where the
+ * machine is now into the highlighted cell, so the operator jogs to the corner of
+ * the part and presses one key.
+ *
+ * Machine position arrives in the report unit and `G10 L2` speaks the modal unit,
+ * so this converts. Getting that wrong would put a work zero 25.4 times too far
+ * out, which on a real machine is how you find out where the table ends.
+ */
+function partZeroSet () {
+  if (s.stale) { s.message = 'no position from the machine — cannot set part zero'; return invalidate() }
+  const k = displayScale(s.reportUnits, s.units)
+  writeOffset(s.mpos[s.offsetCol] * k)
 }
 
 // ------------------------------------------------------------- the run switches
@@ -264,8 +361,28 @@ function eraseProgram () {
   invalidate()
 }
 
+/**
+ * WRITE/ENTER. What it does depends on which pane is active — that is the whole
+ * point of the active-pane model, and the reason exactly one pane is white.
+ *
+ * On a data-entry pane it commits the typed value into the highlighted cell. On
+ * any other, it is MDI: the typed text goes to the machine as a block.
+ */
 function commitInput () {
   const v = s.input.trim()
+
+  if (s.activePane === 'offset') {
+    if (!v) { s.message = 'type a value first, or press PART ZERO SET'; return invalidate() }
+    // A control that quietly writes zero because the operator typed "12x" is
+    // worse than one that refuses. Offsets move the machine's idea of the part.
+    if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(v)) {
+      s.message = `"${v}" is not a number`
+      return invalidate()
+    }
+    s.input = ''
+    return writeOffset(Number(v))
+  }
+
   s.input = ''
   invalidate()
   if (v) send(v)
@@ -397,6 +514,11 @@ function onLine (line) {
     return invalidate()
   }
 
+  // A bare `ok` is the machine acknowledging a block we sent by hand. It is not
+  // news, and posting it wipes the message that explained what just happened —
+  // "G55 Y set to -12.5000" became "ok" a quarter of a second later.
+  if (line === 'ok') return
+
   const fb = parseFeedback(line)
   if (!fb) { s.message = line; return invalidate() }
 
@@ -411,6 +533,8 @@ function onLine (line) {
     if (wcs) s.wcs = wcs[0]
   } else if (fb.kind === 'TLO') {
     s.tlo = fb.value[2] ?? 0
+  } else if (/^G5[4-9](\.[1-3])?$/.test(fb.kind)) {
+    s.offsets = { ...s.offsets, [fb.kind]: fb.value }
   } else if (fb.kind === 'MSG') {
     s.message = fb.value
   }
@@ -432,11 +556,27 @@ function applyStatus (st) {
   // (`Ln:` is not usable for this: it counts blocks executed since power-up, not
   // source lines, unless the program carries N words.)
   if (s.job && st.bf && s.plannerSize) {
+    // `Bf:` counts planner blocks still to be *completed*, which includes the one
+    // under the tool right now. So acked minus queued is the index of the block
+    // being executed, not of the last one finished — subtracting a further 1, as
+    // this did, highlighted the previous block for the whole program. DIST TO GO
+    // is what exposed it: it read zero on an axis the machine was visibly moving.
     const queued = Math.max(0, s.plannerSize - st.bf.blocks)
     const wireAt = Math.max(0, streamer.acked - queued)
     // ...and back to the source row, because the run switches may have removed
     // blocks between the listing and the wire.
-    s.program.current = wireAt > 0 ? (s.job.rows[wireAt - 1] ?? 0) + 1 : 0
+    const row = s.job.rows[Math.min(wireAt, s.job.rows.length - 1)] ?? 0
+    s.program.current = row + 1
+
+    const block = s.program.lines[s.program.current - 1]?.text
+    s.dtg = distanceToGo(block, {
+      mpos: s.mpos,
+      wco: s.wco,
+      absolute: !/\bG91\b/.test(s.modal ?? ''),
+      scale: displayScale(s.units, s.reportUnits)   // modal unit -> report unit
+    })
+  } else if (!s.job) {
+    s.dtg = null            // nothing running, nothing left to travel
   }
 
   if (s.job?.sentAll && st.state === 'Idle') {

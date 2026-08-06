@@ -191,6 +191,13 @@ export const VERIFIED = new Set([
   // SETTING carries the one setting this control has — inch/metric, observed
   // switching the board's modal state and the DRO's units together
   'page-setting',
+  // OFFSET, and the two ways to write a cell in it: a typed value committed with
+  // WRITE/ENTER, and PART ZERO SET storing the machine position. Both watched
+  // going out as `G10 L2` and coming back through `$#`, in millimetres and in
+  // inches — 30 mm stored from inch mode read back as 30.000 mm.
+  'page-offset', 'part-zero-set', 'enter',
+  // ORIGIN zeroes the sender's own OPERATOR readout; no machine needed
+  'zero-origin',
   // modes whose behaviour exists: jogging and running a program
   'mode-jog', 'mode-memory',
   // control memory — observed importing, filing by O-number, selecting and
