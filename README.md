@@ -20,8 +20,10 @@ program, picks it from control memory with LIST PROGRAM, sets work offsets and
 tool lengths on the OFFSET pages, edits blocks word by word in EDIT, types blocks
 in MDI, and runs the job with the run switches, overrides and cycle timers live.
 100 of the 132 keys work and are tinted green; 12 are faded because this control
-can never honour them; the rest draw and say so when pressed. The one thing left
-is Web Serial against real USB hardware, which has never been plugged in.
+can never honour them; the rest draw and say so when pressed. Still to do: Web
+Serial against real USB hardware, which has never been plugged in, and three of
+the thirteen display pages — CURRENT COMMANDS, PARAMETER/DIAGNOSTIC and HELP —
+which switch correctly but are still stubs. See [PLAN.md](PLAN.md).
 
 ## Run it
 

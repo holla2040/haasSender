@@ -27,8 +27,13 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 ## Where it stands
 
-Phases 1 through 5 are done and pushed, and phase 6 all but the USB check. Of 132 keys: **100 work** (green), **12 can
-never work** on this control (faded), the rest draw and say so when pressed.
+Phases 1 through 5 are done and pushed; phase 6 all but the USB check. Of 132
+keys: **100 work** (green), **12 can never work** on this control (faded), the
+rest draw and say so when pressed.
+
+**Not finished:** three display pages are still stubs and the key tint wants
+inverting — see **Still open** below — plus two known bugs listed under phase 3
+and the Web Serial check that needs a board plugged in.
 
 | | |
 |---|---|
@@ -84,8 +89,8 @@ Small, no design risk, and the first one is a correctness-of-information bug.
 - [x] **Two-state key treatment.** Three states are drawn, because three are true:
       green = works, faded = can never work (`UNAVAILABLE` in `keys.js`, 12 keys),
       plain = not built yet. Faded covers RAPID 5%, the chip conveyor, the tool
-      changer and the programmable coolant. Still to do: **invert the first state
-      once coverage is high** — fade what is missing rather than tint what is done.
+      changer and the programmable coolant. The inversion this item also called for
+      is now due and has its own entry under **Still open**.
 - [x] **RAPID 5% tells the truth.** Pressing any faded key posts its reason to the
       status bar — `RAPID 5% not supported — this control has 100%, 50% and 25%`.
       One mechanism, so a key never sits mute.
@@ -231,6 +236,30 @@ The fiddliest behaviour in the project. Budget accordingly.
 - [x] Alpha and numeric keys type into the active pane — via the input bar, which
       is the entry buffer `WRITE/ENTER` commits into whichever pane is active.
       Offsets, tool lengths, MDI blocks and EDIT words all go in this way.
+
+## Still open
+
+Named here because the plan was quietly claiming more than was true: three of the
+thirteen display pages are still stubs, and the key-tint inversion was buried
+inside a ticked item as an aside. Neither is finished work.
+
+- [ ] **Three display pages are placeholders** — `PLACEHOLDER` in `screen.js`. All
+      three switch panes correctly and none is in `VERIFIED`, so nothing is being
+      claimed falsely, but a student pressing them finds a stub.
+      - **CURRENT COMMANDS** is the one worth doing: the data is already in
+        `s.modal` from `$G`, and a HAAS shows the modal state broken out by group
+        rather than as one string. This is the smallest real win left.
+      - **PARAMETER / DIAGNOSTIC** could list `$$`. That means parsing the settings
+        dump and deciding which of ~90 grbl settings a student should see, which is
+        a design question, not a transcription job.
+      - **HELP** on a HAAS is the manual on the control. The obvious honest version
+        is a page per key group saying what each key does *here* — including which
+        ones this machine cannot do, which `UNAVAILABLE` already knows.
+- [ ] **Invert the key tint now that coverage is high.** 100 of 132 are green,
+      which was the condition set for flipping it: fade what is still missing
+      rather than tint what is done, and keep the third state for what can never
+      work. The CSS and the sets are already there; it is the `.done` rule that
+      changes.
 
 ## Phase 6 — Hardware and install
 
