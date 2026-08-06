@@ -246,6 +246,11 @@ function press (id) {
     case 'zero-all':
       s.message = 'homing — untested on this machine, no limit switches fitted'
       return send('$H')
+    // G28 needs no limit switches: it is a move to a stored position, not a
+    // homing search. Watched returning the machine from X15 Y8 Z12 to zero.
+    case 'zero-home':
+      s.message = 'returning to the G28 position'
+      return send('G28')
     case 'zero-single':
       // A HAAS homes one axis at a time here, and asks which. grblHAL takes the
       // axis letter after `$H`.

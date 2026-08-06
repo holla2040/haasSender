@@ -28,7 +28,7 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 ## Where it stands
 
 All six phases are done except one item that needs a person at the bench. Of 132
-keys: **106 work**, **14 can never work** on this control, **12 are not built
+keys: **107 work**, **13 can never work** on this control, **12 are not built
 yet**. All thirteen display pages are real.
 
 The twelve unbuilt: POWER UP RESTART, F1-F4, JOG LOCK, the two HANDLE CONTROL
@@ -211,10 +211,12 @@ The phase with real design in it. Do this before phase 5.
       **The homing keys are NOT in `VERIFIED`** and say so when pressed: this board
       has no limit switches, so `$H` is the one mapping in the project that cannot
       be confirmed.
-      **`HOME G28` turned out to be worse than unbuilt.** It was wired to `G28`,
-      which this board answers with `error:20` — the key looked live and produced
-      an error every time. Measured, not assumed; it is now marked impossible with
-      that reason, alongside `ORIENT SPINDLE`, whose `M19` errors the same way.
+      **`HOME G28` is verified** — it needs no limit switches, being a move to a
+      stored position rather than a homing search, and it was watched taking the
+      machine from `X100 Y100` back to zero. It was briefly and wrongly marked
+      impossible; see [`history/g28-false-alarm.md`](history/g28-false-alarm.md).
+      `ORIENT SPINDLE` is impossible for a real reason: `M19` needs a spindle
+      encoder and a grbl machine has none.
 - [x] DIST TO GO — computed from the running block, and **null when the block does
       not say**: no axis words, or `G91`, where the target depends on where the move
       began. Dashes rather than a plausible zero.
@@ -380,11 +382,16 @@ Things that cost real time to discover. Do not re-derive them.
   from the top with the tool in the cut, and after RESET it sent a resume byte to
   a machine with nothing queued instead of starting the job, because the streamer
   still held the old line list. RESET now clears the streamer rather than pausing it.
-- **This board does not support `G28`, `G28.1` or `M19`** — all three answer
-  `error:20`, measured over telnet and again through the control. Worth knowing
-  because `$#` *does* report a `[G28:…]` parameter, so the position exists while
-  the command to go to it does not; the parameter's presence is not evidence the
-  command works. The lesson generalises: check the command, not the report.
+- **Never conclude "unsupported" from an error message alone.** `G28` was marked
+  impossible in this repo on the strength of an `error:20` that reproduced twice
+  and then never again; it works fine, and the key now moves the machine. A
+  positive result about hardware is proved by watching the machine; a negative one
+  cannot be proved by an error at all, because an error has many causes. `$#`
+  reporting a `[G28:…]` parameter was evidence against the conclusion and was
+  explained away instead of investigated. Full write-up:
+  [`history/g28-false-alarm.md`](history/g28-false-alarm.md).
+  `M19` really is unsupported — a grbl machine has no spindle encoder, so there is
+  nothing for orientation to mean.
 - **`$13` and G20/G21 are different questions.** `$13` says what unit `MPos:`
   arrives in; G20/G21 says what the numbers in a *block* mean. Commanding `G20`
   does not change the report — measured on the board. Any inch display therefore

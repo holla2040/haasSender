@@ -19,9 +19,9 @@ Status: **complete except one deferred item.** A student imports a program, pick
 it from control memory with LIST PROGRAM, sets work offsets and tool lengths on
 the OFFSET pages, edits blocks word by word in EDIT, types blocks in MDI, and runs
 the job with the run switches, overrides and cycle timers live. All thirteen
-display pages are real. 106 of the 132 keys work; 14 are faded because this
+display pages are real. 107 of the 132 keys work; 13 are faded because this
 control can never honour them; 12 are muted because they are not built yet — and
-pressing any of those 26 says which it is.
+pressing any of those 25 says which it is.
 
 **Web Serial is deferred and untested**: no USB board has ever been plugged in,
 and `requestPort()` opens a native picker only a person can answer. It is written

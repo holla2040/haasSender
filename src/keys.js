@@ -241,9 +241,11 @@ export const VERIFIED = new Set([
   // the rotary pair drives the fourth axis, and the board has one: `[AXS:4:XYZA]`.
   // Watched A go 5.000 → 25.000 → 15.000 on the real machine.
   'jog-b-plus', 'jog-a-plus',
-  // ZERO RETURN as a mode — the bar reads SETUP: ZERO. The keys inside it are a
-  // different question and stay unverified; homing has no switches to test with.
-  'mode-zero-return',
+  // ZERO RETURN as a mode — the bar reads SETUP: ZERO. `HOME G28` is a move to a
+  // stored position rather than a homing search, so it needs no limit switches
+  // and is verified: watched taking the machine from X15 Y8 Z12 back to zero.
+  // `ALL` and `SINGLE` are homing and stay unverified.
+  'mode-zero-return', 'zero-home',
   // every override byte, each watched moving `Ov:` on the real board
   'feed-minus', 'feed-100', 'feed-plus',
   'spindle-minus', 'spindle-100', 'spindle-plus',
@@ -299,10 +301,11 @@ export const VERIFIED = new Set([
  * NOT here: they are unimplemented, not impossible, and claiming otherwise would
  * overstate what we know.
  *
- * This table is static, but two of its entries — `G28` and `M19` — are facts
- * about *this firmware build*, not about grbl. A different grblHAL machine may
- * well accept both. Re-check them before trusting this file on other hardware:
- * send the command and read the reply, which is how they got here.
+ * Everything here is a property of the *class* of machine — no such hardware, or
+ * no such command in grbl — rather than of one firmware build. `G28` was briefly
+ * and wrongly in this table on the strength of a flaky measurement; see
+ * `history/g28-false-alarm.md` for how that happened and what it cost. If a key
+ * is only failing on the bench today, it does not belong here.
  */
 export const UNAVAILABLE = new Map([
   // grbl's rapid override is a three-position switch: 0x95/0x96/0x97. There is no
@@ -327,12 +330,11 @@ export const UNAVAILABLE = new Map([
   ['coolant-down', 'no programmable coolant fitted to this machine'],
   ['aux-coolant', 'no programmable coolant fitted to this machine'],
 
-  // Both measured on the ClearCore rather than assumed, and both came back
-  // `error:20` — the parser does not know either command. HOME G28 was worse than
-  // unbuilt before that was checked: it was wired to a command the board rejects,
-  // so the key looked live and produced an error every time.
-  ['zero-home', 'G28 is not supported by this board — it answers error:20'],
-  ['orient-spindle', 'M19 spindle orient is not supported by this board — it answers error:20']
+  // Spindle orientation. A grbl machine has no such thing — there is no encoder
+  // and no closed loop to hold an angle, so `M19` is not a gap in this build, it
+  // is a capability the class of machine does not have. The board answers
+  // `error:20`, which is the parser agreeing.
+  ['orient-spindle', 'no spindle orientation on a grbl machine — nothing to hold an angle']
 ])
 
 // ---------------------------------------------------------------- mode mapping
