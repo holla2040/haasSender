@@ -254,6 +254,26 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 ## Still open
 
+- [x] **Fits a 1080p screen.** 1886 × 1056 at `--u` clamped to 14px, so it clears
+      1920 × 1080 in fullscreen with 34px and 24px to spare. The keys and the
+      left-hand column are untouched; the height came out of the display, the
+      panel's top and bottom margins, the screen's own padding and gaps, and the
+      leading, which went to 1.25.
+      **The width is now deliberate, and it has to be.** Left alone the pendant was
+      as wide as the longest line of monospace text that happened to be in a pane —
+      the keyboard only needs 1202px — so shortening a few hint strings silently
+      took 89px off the whole panel. `.stack` is pinned at 110u and the keyboard
+      stretches into it.
+      Content sits 10px further from the right-hand rivets, done by moving the
+      horizontal padding rather than adding any, so the outside width is unchanged.
+      Rivets in all four corners now, as real elements: two pseudo-elements cannot
+      make four, and every trick that stretches them costs more than the markup.
+      **Check every page after changing any of this.** The pages that clipped were
+      the ones whose row counts and hint blocks were written when the pane was
+      299px tall; it is 173px now. Measure the `<pre>` against its *own* box —
+      comparing it to the pane's includes the title bar and reads a two-line
+      overflow as one pixel, which is exactly the mistake made here first time.
+
 - [x] **The handwheel actually works like a handwheel.** It answered a mouse wheel
       and nothing else, which is undiscoverable on a control drawn as a knob —
       clicking or dragging it did nothing at all. It now turns under a drag,

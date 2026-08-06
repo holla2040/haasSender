@@ -1,6 +1,11 @@
 import { html, nothing } from 'lit-html'
 import { WCS, TOOL_COUNT, words, modalGroups } from '../grbl.js'
-import { UNAVAILABLE } from '../keys.js'
+import { UNAVAILABLE, VERIFIED, GROUPS } from '../keys.js'
+
+// Counted from the key tables rather than written down, so the HELP page cannot
+// drift out of step with the panel it is describing.
+const TODO_KEYS = Object.values(GROUPS).flatMap(g => g.rows.flat())
+  .filter(k => k.id && !UNAVAILABLE.has(k.id) && !VERIFIED.has(k.id)).length
 
 // The control display: one fixed layout of thirteen panes, per figure F2.27 and
 // section 2.3.4 of the 2014 Mill Operator's Manual. The panes do not change; what
@@ -68,8 +73,8 @@ function positionBody (s) {
  * DELETE all act on.
  */
 function editBody (s) {
-  const from = Math.max(0, Math.min(s.editRow - 6, s.program.lines.length - 15))
-  return html`<pre>${s.program.lines.slice(from, from + 15).map((l, i) => {
+  const from = Math.max(0, Math.min(s.editRow - 4, s.program.lines.length - 10))
+  return html`<pre>${s.program.lines.slice(from, from + 10).map((l, i) => {
     const row = from + i
     if (row !== s.editRow) return html`<div class=${l.del && s.blockDelete ? 'skipped' : ''}>${l.text}</div>`
     const w = words(l.text)
@@ -112,12 +117,8 @@ function settingBody (s) {
   const inch = s.units === 'IN'
   return html`<pre>  9  INCH / METRIC        <span class="k">${inch ? 'INCH' : 'METRIC'}</span>   <span class="dim">${inch ? 'G20' : 'G21'}</span>
 
-<span class="dim">CURSOR ◀ ▶ changes the value.</span>
-
-<span class="dim">On a HAAS this is a stored setting. Here it is
-modal g-code, so a program that commands G20 or
-G21 changes it too — this pane follows the
-machine rather than the other way round.</span></pre>`
+<span class="dim">CURSOR ◀ ▶ changes it. Modal g-code here, not a stored
+setting, so a program commanding G20 or G21 changes it too.</span></pre>`
 }
 
 /**
@@ -141,9 +142,9 @@ machine rather than the other way round.</span></pre>`
 function toolBody (s) {
   const k = displayScale(s.reportUnits, s.units)
   const inches = s.units === 'IN'
-  const from = Math.max(0, Math.min(s.toolRow - 5, TOOL_COUNT - 12))
+  const from = Math.max(0, Math.min(s.toolRow - 3, TOOL_COUNT - 7))
   return html`<pre>  TOOL     LENGTH (Z)
-${Array.from({ length: 12 }, (_, i) => {
+${Array.from({ length: 7 }, (_, i) => {
     const n = from + i + 1
     const v = s.tools[n]
     return html`<div>  T${String(n).padStart(2, '0')}  ${
@@ -151,10 +152,7 @@ ${Array.from({ length: 12 }, (_, i) => {
         ? '—'
         : fmt(v * k, inches, s.stale))).slice(-11)}</div>`
   })}
-<span class="dim">TOOL OFFSET MEASURE stores the machine Z where the tip
-is now. A dash means never measured, and a G43 naming
-that tool applies no offset at all — rarely what a
-program that asked for one meant.</span></pre>`
+<span class="dim">TOOL OFFSET MEASURE stores the machine Z. A dash is never measured.</span></pre>`
 }
 
 function offsetBody (s) {
@@ -170,11 +168,7 @@ ${WCS.map((w, row) => {
     return html`<div>${(label + '        ').slice(0, 9)}${AXES.map((a, col) => html`<span
       class=${row === s.offsetRow && col === s.offsetCol ? 'cur' : ''}
       >${('        ' + fmt(v[col] * k, inches, s.stale)).slice(-9)}</span>`)}</div>`
-  })}
-<span class="dim">Cursor moves the cell. Type a value and press WRITE/ENTER
-to set it, or PART ZERO SET to store the current machine
-position. G154 P1-P3 are this control's G59.1-G59.3 —
-a HAAS goes on to P20, and those do not exist here.</span></pre>`
+  })}</pre>`
 }
 
 /**
@@ -229,10 +223,8 @@ CURRENT COMMANDS shows the modal state —
 what the control will do if you give it a
 move with no other words on the line.</pre>`
   }
-  return html`<pre>${rows.map(r => html`<div>${(r.group + '              ').slice(0, 14)}<span
-    class="k">${(r.code + '      ').slice(0, 7)}</span><span class="dim">${r.meaning}</span></div>`)}
-<span class="dim">This is the one $G string the ACTIVE CODES pane shows
-whole, split into the groups a HAAS names them by.</span></pre>`
+  return html`<pre class="two-col">${rows.map(r => html`<div>${(r.group + '             ').slice(0, 13)}<span
+    class="k">${(r.code + '     ').slice(0, 6)}</span><span class="dim">${r.meaning}</span></div>`)}</pre>`
 }
 
 /**
@@ -253,12 +245,10 @@ function paramBody (s) {
 Press WRITE/ENTER on an empty input bar
 here to ask the machine for $$.</pre>`
   }
-  const from = Math.max(0, Math.min(s.paramRow - 6, keys.length - 14))
-  return html`<pre>${keys.slice(from, from + 14).map((k, i) => html`<div
+  const from = Math.max(0, Math.min(s.paramRow - 4, keys.length - 8))
+  return html`<pre>${keys.slice(from, from + 8).map((k, i) => html`<div
     class=${from + i === s.paramRow ? 'cur' : ''}>${('   $' + k + '        ').slice(0, 8)}${
-    ('            ' + s.settings[k]).slice(-13)}  <span class="dim">${SETTING_NOTE[k] ?? ''}</span></div>`)}
-<span class="dim">Read-only. These are the machine's, not this control's,
-and $13 in particular decides what unit MPos: arrives in.</span></pre>`
+    ('            ' + s.settings[k]).slice(-13)}  <span class="dim">${SETTING_NOTE[k] ?? ''}</span></div>`)}<span class="dim">Read-only, and the machine's own. $13 decides what MPos: means.</span></pre>`
 }
 
 /** The few settings that explain how the rest of this control behaves. */
@@ -289,15 +279,12 @@ function cardBody (s) {
 
 RECEIVE reads the card.</pre>`
   }
-  const from = Math.max(0, Math.min(s.sdIndex - 6, s.sdFiles.length - 14))
-  return html`<pre>${s.sdFiles.slice(from, from + 14).map((f, i) => html`<div
+  const from = Math.max(0, Math.min(s.sdIndex - 4, s.sdFiles.length - 9))
+  return html`<pre>${s.sdFiles.slice(from, from + 9).map((f, i) => html`<div
     class=${from + i === s.sdIndex ? 'cur' : ''}>${(f.name + '                        ').slice(0, 24)}${
     ('        ' + (f.size > 1024 ? (f.size / 1024).toFixed(0) + ' KB' : f.size + ' B')).slice(-9)}</div>`)}
-
-<span class="dim">RECEIVE copies the highlighted file into control memory.
-CYCLE START runs it on the machine, straight off the card,
-which is the only way to run one too big to copy.
-SEND writes the selected program back. LIST PROGRAM returns.</span></pre>`
+<span class="dim">RECEIVE copies it here, CYCLE START runs it on the machine,
+SEND writes back, LIST PROGRAM returns.</span></pre>`
 }
 
 /** Control memory: what LIST PROGRAM shows, filed by O-number. */
@@ -310,16 +297,13 @@ Import a file with the picker above the
 pendant. It is filed by the O-number on
 its first line.</pre>`
   }
-  const from = Math.max(0, Math.min(s.listIndex - 6, s.programs.length - 14))
-  return html`<pre>${s.programs.slice(from, from + 14).map((p, i) => {
+  const from = Math.max(0, Math.min(s.listIndex - 5, s.programs.length - 10))
+  return html`<pre>${s.programs.slice(from, from + 10).map((p, i) => {
     const at = from + i
     return html`<div class=${at === s.listIndex ? 'cur' : ''}>${p.o}   ${
       p.o === s.program.o ? '*' : ' '} ${p.name}</div>`
   })}
-
-<span class="dim">* is the selected program. SELECT PROGRAM
-loads the highlighted one, ERASE PROGRAM
-removes it.</span></pre>`
+<span class="dim">* is selected. SELECT PROGRAM loads, ERASE PROGRAM removes.</span></pre>`
 }
 
 const MAIN_TITLE = {
@@ -343,41 +327,16 @@ const MAIN_TITLE = {
  * written down, so this page cannot drift out of step with the keypad.
  */
 function helpBody (s) {
-  return html`<pre>This is a HAAS-lookalike control driving a grblHAL
-machine. The keypad, the panes and the modes are the
-real layout. The machine underneath is not a HAAS, and
-these are the places that shows:
-
-<span class="k">The handwheel</span>   Grab it and turn, or scroll on it. It moves the
-                axis you last touched with a jog key — the icon
-                bar shows which — by one increment a detent.
-                On a page with a cursor it scrolls that instead,
-                and HANDLE CONTROL FEED or SPINDLE turns it into
-                an override knob at 1% a detent.
-
-<span class="k">Faded keys</span>      ${UNAVAILABLE.size} keys have nothing underneath them on
-                this machine — no chip conveyor, no tool
-                changer, no programmable coolant, and no
-                5% rapid in grbl. Press one and it says so.
-
-<span class="k">Tool offsets</span>    This control owns the tool table; the
-                machine has none. G43 H&#8202;n is sent as G43.1.
-
-<span class="k">G154 P1-P3</span>      are this machine's G59.1-G59.3. A HAAS
-                goes on to P20; those do not exist here.
-
-<span class="k">Inch / metric</span>   is modal g-code here (G20/G21), not a
-                stored setting. SETTING page, cursor left
-                and right.
-
-<span class="k">EMERGENCY STOP</span>  is a software reset. It is NOT a hardware
-                E-stop and cannot be one from a browser.
-
-<span class="k">$ commands</span>      SHIFT then 5 types the $ character.
-                $X clears an alarm, $H homes.
-
-<span class="k">Homing</span>          is wired but has never been tested on the
-                bench machine, which has no limit switches.</pre>`
+  return html`<pre>A HAAS-lookalike control driving a grblHAL machine. The keypad,
+panes and modes are the real layout. Where it differs:
+<span class="k">Handwheel</span>  turn it or scroll — moves the axis a jog key last picked,
+           or scrolls any page with a cursor.
+<span class="k">Faded keys</span> ${UNAVAILABLE.size} can never work here, ${TODO_KEYS} are not built — press one.
+<span class="k">Tools</span>      this control owns the table; G43 H&#8202;n goes out as G43.1.
+           G154 P1-P3 are this machine's G59.1-G59.3.
+<span class="k">Units</span>      modal g-code, not a stored setting — SETTING page.
+<span class="k">$ keys</span>     SHIFT then 5 types $. $X clears an alarm, $H homes.
+<span class="k">E-STOP</span>     software reset, NOT a hardware E-stop.</pre>`
 }
 
 const PLACEHOLDER = {}

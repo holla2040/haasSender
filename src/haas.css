@@ -54,7 +54,9 @@ body {
   display: grid;
   grid-template-columns: calc(var(--u) * 20) 1fr;
   gap: calc(var(--u) * 1.5);
-  padding: calc(var(--u) * 1.6);
+  /* Tight top and bottom, because the whole panel has to clear 1080 and every
+     pixel of margin is one the display does not get. The sides are unchanged. */
+  padding: calc(var(--u) * .8) calc(var(--u) * 2.3) calc(var(--u) * .8) calc(var(--u) * .9);
   border-radius: calc(var(--u) * 0.6);
   /* brushed stainless */
   background:
@@ -67,16 +69,22 @@ body {
     0 calc(var(--u) * 1.2) calc(var(--u) * 3) rgba(0,0,0,.55);
 }
 
-/* screws in the corners, as on the real panel */
-.pendant::before, .pendant::after {
-  content: ""; position: absolute; width: calc(var(--u) * .9); height: calc(var(--u) * .9);
+/* Screws in all four corners, as on the real panel. Real elements rather than
+   ::before/::after, because two pseudo-elements cannot make four rivets and every
+   trick that stretches them to (gradient pairs, offset box-shadows) costs more
+   than the markup it saves. */
+.pendant { position: relative; }
+.rivet {
+  position: absolute; width: calc(var(--u) * .9); height: calc(var(--u) * .9);
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #eceff1, #7d858c 60%, #5c6368);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
+  pointer-events: none;
 }
-.pendant { position: relative; }
-.pendant::before { top: calc(var(--u) * .55); left: calc(var(--u) * .55); }
-.pendant::after  { top: calc(var(--u) * .55); right: calc(var(--u) * .55); }
+.rivet.tl { top: calc(var(--u) * .55); left: calc(var(--u) * .55); }
+.rivet.tr { top: calc(var(--u) * .55); right: calc(var(--u) * .55); }
+.rivet.bl { bottom: calc(var(--u) * .55); left: calc(var(--u) * .55); }
+.rivet.br { bottom: calc(var(--u) * .55); right: calc(var(--u) * .55); }
 
 /* ------------------------------------------------------------- left-hand column */
 
@@ -167,7 +175,17 @@ body {
 
 /* ------------------------------------------------------------------ right side */
 
-.stack { display: flex; flex-direction: column; gap: calc(var(--u) * 1.2); min-width: 0; }
+/* The width is deliberate, and it has to be. Left to itself the pendant was as
+   wide as the longest line of monospace text that happened to be in a pane — so
+   editing a hint string silently resized the whole panel, and shortening a few of
+   them took 89px off it. The keyboard only needs 1202px at u=14; the screen asked
+   for more. Pin the stack and let the keyboard stretch into it. */
+.stack {
+  display: flex; flex-direction: column;
+  gap: calc(var(--u) * .7);
+  width: calc(var(--u) * 110);
+  min-width: 0;
+}
 
 /* ---------------------------------------------------------------- the keyboard */
 
@@ -367,17 +385,23 @@ body {
   /* Height is set in units rather than by aspect ratio: the screen's width comes
      from the keyboard below it, and letting a 4:3 ratio drive the height made the
      display tower over the keypad, which is backwards from the real pendant. */
-  height: calc(var(--u) * 40);
+  height: calc(var(--u) * 31);
   background: #05140a;
   border-radius: calc(var(--u) * .4);
-  padding: calc(var(--u) * .9);
+  /* Every tenth of a unit here is a row of text the main pane does not get, and
+     the main pane is where the offset table and the program listing live. */
+  padding: calc(var(--u) * .6);
   box-shadow: inset 0 0 0 calc(var(--u)*.5) #1b1e21, inset 0 0 calc(var(--u)*2.5) rgba(0,0,0,.85),
               0 calc(var(--u)*.3) calc(var(--u)*.8) rgba(0,0,0,.5);
   font-family: var(--font-screen);
-  font-size: calc(var(--u) * .95);
+  font-size: calc(var(--u) * .88);
+  /* Tight leading. The screen lost a third of its height to fit 1080, and rows of
+     text are what it spends that height on — 1.25 buys back about one row in
+     eight without touching the type size. */
+  line-height: 1.25;
   color: var(--screen-text);
   display: grid;
-  gap: calc(var(--u) * .35);
+  gap: calc(var(--u) * .25);
   grid-template-columns: 1.15fr 1fr .8fr .55fr;
   grid-template-rows: auto auto 1fr auto auto auto;
   grid-template-areas:
@@ -455,5 +479,10 @@ body {
 
 /* the running block, highlighted from Ln: in the status report */
 .cur { background: var(--screen-key); color: #10160f; }
+/* CURRENT COMMANDS lists every modal group at once. One column of fourteen rows
+   does not fit a screen that has to clear 1080; two columns of seven does, and the
+   pane is wide enough that nothing has to shrink to manage it. */
+.two-col { column-count: 2; column-gap: calc(var(--u) * 1.4); }
+
 /* a block BLOCK DELETE will skip — shown, not hidden, so the switch is visible */
 .skipped { opacity: .38; }

@@ -106,6 +106,9 @@ export const pendant = (state, actions) => {
   const press = actions.press
   return html`
     <div class="pendant">
+      <i class="rivet tl"></i><i class="rivet tr"></i>
+      <i class="rivet bl"></i><i class="rivet br"></i>
+
       <div class="column">
         ${badge}
 
