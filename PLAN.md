@@ -254,6 +254,19 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 ## Still open
 
+- [x] **The always-visible POSITION strip is deliberately not HAAS-sized.** On the
+      machine it matches everything around it; here it is the one readout an
+      operator watches continuously while jogging, and it was 12.32px in a pane
+      carrying 30px of unused space. The values are 29.4px now — 2.4× — at the same
+      pane height, paid for out of that slack plus the axis-letter row, which
+      became a small centred label rather than a line of its own. Sized so the
+      widest value that can appear still fits: `-1000.0000` in inch mode needs
+      185px against a 178px cell at 2.2u, so it is 2.1u.
+      The big DRO on the POSITION page is untouched, as asked — except that it was
+      **clipping DIST TO GO by 23px**, a regression from the 1080p height cut that
+      the first overflow check missed. Fixed by leading alone (1.5 → 1.22); the
+      numbers are the size they always were.
+
 - [x] **HELP pages with PAGE UP / PAGE DOWN**, as a control's manual does. Length
       stopped being the constraint the moment it could scroll, so the text cut
       twice to fit 1080 is back and fuller than it ever was — 42 lines, ten at a

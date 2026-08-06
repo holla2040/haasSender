@@ -369,6 +369,25 @@ body {
 /* the divider the MDI/DNC key carries between its two legends */
 .key.rule .lines > span:first-child { border-bottom: 1px solid #17191b; padding-bottom: 1px; }
 
+/* --------------------------------------------- the always-visible position
+
+   A deliberate departure from the HAAS layout. On the machine this strip is the
+   same size as everything around it; here it is the one readout an operator
+   watches continuously while jogging, and it was 12px sitting in a pane with 30px
+   of unused space in it. So the numbers take all of it.
+
+   The pane height is unchanged — this spends slack that was already there, plus
+   the axis-letter row, which becomes a small label rather than a line of its own.
+   Scoped to this pane on purpose: the big DRO on the POSITION page is untouched. */
+.pane-position .dro { align-content: center; height: 100%; row-gap: 0; }
+.pane-position .dro span { font-size: calc(var(--u) * 2.1); line-height: 1.1; }
+.pane-position .dro > span:nth-child(-n+5) {   /* the X Y Z A header row */
+  font-size: calc(var(--u) * .72);
+  line-height: 1;
+  text-align: center;      /* a column header, not a right-aligned number */
+}
+.pane-position .dro b { font-size: calc(var(--u) * .72); align-self: center; }
+
 /* --------------------------------------------------------------- the screen */
 
 /* Power off. An unlit LCD is not black — it is cold glass with a faint sheen on
@@ -466,7 +485,10 @@ body {
 .dro { display: grid; grid-template-columns: auto repeat(4, 1fr); gap: 0 calc(var(--u)*.6); }
 /* The position readouts are the largest text on a HAAS screen — an operator reads
    them from a pace away, through the window. */
-.dro.big { font-size: calc(var(--u) * 1.7); line-height: 1.5; }
+/* Leading only. The numbers stay the size they were — the screen lost a third of
+   its height to fit 1080 and 1.5 line-height no longer left room for the fourth
+   row, so DIST TO GO was being cut off the bottom of the pane. */
+.dro.big { font-size: calc(var(--u) * 1.7); line-height: 1.22; }
 .dro.big b { font-size: calc(var(--u) * .95); align-self: center; }
 .dro b { color: var(--screen-dim); font-weight: 400; }
 .dro span { text-align: right; font-variant-numeric: tabular-nums; }
