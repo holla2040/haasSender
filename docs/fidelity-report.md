@@ -222,6 +222,33 @@ coming back pinned to its block with the pocket-milling note, HOME+`O10`+ALTER
 filing `O00010` and clearing the page, and `$G` reporting that it went straight
 to the machine.
 
+## Directory pass, 2026-08-07 — W5 and the §3.3.4 prompt closed (tests 88/88 green)
+
+The two LIST-mode keys the manual describes and this control did not.
+
+- **SELECT PROGRAM takes a typed number** (§4.1 step 2 names `[SELECT PROGRAM]`
+  **or** `[ENTER]` in one sentence, and says the control creates the program when
+  it does not exist). Only ENTER honoured it before. The key now reads the input
+  bar and falls through to the same `selectOrCreateProgram`; the plain
+  highlight-and-press half is `selectHighlighted`, which importing a file and the
+  typed path both call directly so neither can re-consult the keypad buffer.
+- **ERASE PROGRAM asks first** (§3.3.4 steps 3-4). The NOTE above those steps —
+  "You cannot undo this process… You cannot press [UNDO] to recover a deleted
+  program" — is the whole reason it earns a prompt where nothing else here does.
+  `Y` erases, and every other key cancels rather than falling through: an armed
+  delete that outlived an unrelated press could go off later against whatever the
+  cursor had reached. RESET and E-STOP cancel it and still do their own job.
+- **ERASE PROGRAM refuses the active program**, the NOTE between the same two
+  steps. It used to delete it and quietly unload the program pane — two acts when
+  it was asked for one. That unload code is gone, so the fix is a net deletion.
+- HELP gains a `Programs` entry for both, and the empty-directory pane now says a
+  program can be *created* from the keypad rather than only imported.
+
+Verified: 88/88 tests, build 45.0 KB, deployed to the bench board and read back
+byte-identical. **Not yet walked on the pendant** — the browser extension was not
+connected this pass, so the key-by-key confirmation the earlier passes recorded is
+still owed on these four paths.
+
 ## 1. Operator workflows (§3.1, §3.3, §3.12–3.15, §4.2.1, §4.2.3, §4.7)
 
 ### Top findings — mis-teach or surprise a student
@@ -232,7 +259,7 @@ to the machine.
 | W2 | §3.12 p.104 | F1 is the replace key | F1 unimplemented (`keys.js:211` absent) | MISSING | open |
 | W3 | §4.2.3 p.114 | In MDI, CYCLE START executes the MDI blocks | Fixed: the MDI page is a program buffer and CYCLE START runs it through the same wire, switches and streamer (`cycleStart`) | BUG | **fixed** |
 | W4 | §4.2.3 p.114 | ERASE PROGRAM clears the MDI page | Fixed: from MDI the key clears the page and never reaches the directory (`eraseProgram`) | BUG | **fixed** |
-| W5 | §4.1 p.111, §3.3.2 p.77 | Type `Onnnnn` + SELECT PROGRAM selects **or creates** it | Typed O-number ignored; ENTER on LIST pane falls through and is **sent to the machine as g-code** (`main.js:751-757`, `:823-830`); no create-from-pendant | BUG + MISSING | open |
+| W5 | §4.1 p.111, §3.3.2 p.77 | Type `Onnnnn` + SELECT PROGRAM selects **or creates** it | Fixed: both keys the manual names in one breath take a typed number — ENTER on the LIST pane and now SELECT PROGRAM itself, through one `selectOrCreateProgram` (`selectProgram`) | BUG + MISSING | **fixed** |
 | W6 | §4.2.1 p.112 | ENTER is not a machine command in EDIT; MDI window is editable | Fixed: ENTER never reaches the machine as g-code, and the cursor keys + INSERT/ALTER/DELETE/UNDO work on the MDI window (`editing()` covers both windows) | BUG + MISSING | **fixed** |
 | W7 | §3.12.2 F3.11 p.105 | PART ZERO SET advances to the next axis column after each press | Writes the highlighted cell and stays (`partZeroSet main.js:423-427`); taught procedure sets X twice, never Y | BUG | open |
 
@@ -250,7 +277,7 @@ to the machine.
 | §3.12.3 F3.12 p.106 | PAGE UP reaches the tool Coolant/Length/Radius page; Geometry columns | PAGE UP moves cursor 10 rows; single LENGTH column (`main.js:156-159`, `screen.js:142-156`) | BUG (nav) + DELIBERATE (columns) | open |
 | §4.2.1 p.112 | F2 highlights a block / range | No F2; word cursor only | MISSING | open |
 | §4.2.1 p.113 | UNDO reverses last 9 changes | 50-deep stack | DELIBERATE (better) | kept |
-| §3.3.4 p.79 | ERASE PROGRAM prompts Y/N; active program cannot be deleted | Deletes immediately, including the selected one (unloads it) | BUG | open |
+| §3.3.4 p.79 | ERASE PROGRAM prompts Y/N; active program cannot be deleted | Fixed: the key refuses the active program and otherwise asks `Y`/`N` first; the prompt holds the O-number, not the cursor row, and any other key cancels (`eraseProgram`/`eraseConfirmed`) | BUG | **fixed** |
 | §3.3.2 p.78 | Type program number + UP/DOWN switches programs in MEM | Not wired | MISSING | open |
 | §3.3.3/3.3.6/3.3.7 p.78-80 | F2 copy/duplicate, ALTER renames | None of the F2/ALTER file operations | MISSING / DELIBERATE | open |
 | §3.3 p.76 | Device manager: tabbed MEMORY/USB/… with sizes, dates | Two pages: control memory + machine SD card | DELIBERATE | kept |
@@ -281,7 +308,7 @@ shifted character, and the 2 key's apostrophe.
 |---|---|---|---|---|---|
 | K1 | p.39 T2.8 | Metric increments are the first legend ×10: **.001/.01/.1/1. mm** ("`.0001` becomes 0.001 mm") | `INCREMENTS.MM = [0.1, 1, 10, 100]` — **100× too coarse at every position** (`main.js:20`; the misreading is documented in its own comment) | BUG (safety) | open |
 | K2 | p.35 F2.26, p.42 | Rotary jog: key printed **−A/C** jogs A negative, **+A/C** positive | Both signs inverted — `jog-b-plus` (reads −A/C) → `[3,+1]`, `jog-a-plus` (reads +A/C) → `[3,−1]` (`main.js:27`) | BUG (safety) | open |
-| K3 | p.40 T2.10 | ERASE PROGRAM: deletes selected program in LIST mode, **clears the MDI page in MDI mode** | No mode check — in MDI it deletes the highlighted directory program (`main.js:759-773`) (= W4) | BUG | open |
+| K3 | p.40 T2.10 | ERASE PROGRAM: deletes selected program in LIST mode, **clears the MDI page in MDI mode** | Fixed with W4: the key branches on the active pane and never reaches the directory from MDI (`eraseProgram`) | BUG | **fixed** |
 | K4 | p.32 T2.1 | HANDLE JOG wheel jogs axes in HANDLE JOG **mode**; scrolls while **editing** | Gates on pane, not mode (`hasCursor()` includes 'offset') — in SETUP:JOG with OFFSET up, the wheel scrolls the grid instead of jogging, breaking the canonical touch-off workflow | BUG | open |
 | K5 | not in manual | — | Physical PC-keyboard arrows/PageUp/Dn jog X/Y/Z **unconditionally** (`main.js:1365-1373`) — ArrowDown in EDIT jogs the machine | BUG (safety) | open |
 

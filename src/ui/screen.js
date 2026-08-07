@@ -316,9 +316,10 @@ function listBody (s) {
   if (!s.programs.length) {
     return html`<pre class="dim">control memory is empty
 
-Import a file with the picker above the
-pendant. It is filed by the O-number on
-its first line.</pre>`
+Type Onnnnn and press SELECT PROGRAM to
+create one, or import a file with the
+picker above the pendant — that one is
+filed by the O-number on its first line.</pre>`
   }
   const from = Math.max(0, Math.min(s.listIndex - 5, s.programs.length - 10))
   return html`<pre>${s.programs.slice(from, from + 10).map((p, i) => {
@@ -326,7 +327,7 @@ its first line.</pre>`
     return html`<div class=${at === s.listIndex ? 'cur' : ''}>${p.o}   ${
       p.o === s.program.o ? 'A' : ' '} ${p.name}</div>`
   })}
-<span class="dim">A is the active program. SELECT PROGRAM loads, ERASE PROGRAM removes.</span></pre>`
+<span class="dim">A is the active program. SELECT PROGRAM loads, ERASE PROGRAM asks first.</span></pre>`
 }
 
 const MAIN_TITLE = {
@@ -521,6 +522,13 @@ const DIVERGENCES = [
   ['Inch / metric', 'Modal g-code here (G20/G21), not a stored setting,'],
   ['', 'so a program that commands either changes it too.'],
   ['', 'SETTING page, cursor left and right.'],
+  ['', ''],
+  ['Programs', 'LIST PROGRAM shows control memory. SELECT PROGRAM'],
+  ['', 'loads the highlighted one. Type Onnnnn first and it'],
+  ['', 'selects that program instead, or creates it if there'],
+  ['', 'is none — that is how a new program is born here.'],
+  ['', 'ERASE PROGRAM asks Y/N first and refuses the active'],
+  ['', 'program. There is no UNDO for a deleted program.'],
   ['', ''],
   ['The card', 'RECEIVE lists the machine\'s SD card and copies a file'],
   ['', 'into control memory. CYCLE START on that page runs it'],

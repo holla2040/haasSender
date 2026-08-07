@@ -68,8 +68,10 @@ const s = {
   tool: 0, tlo: 0, coolant: false, tsc: false, chipFwd: false, jogLock: false,
   alarm: null, message: '', input: '',
   // Control memory: the program directory, filed by O-number the way a HAAS files
-  // it, and whichever one is currently selected to run.
-  programs: [], listIndex: 0,
+  // it, and whichever one is currently selected to run. `pendingErase` holds the
+  // O-number ERASE PROGRAM has asked about — the number, not the cursor row, so
+  // that what gets deleted is what the prompt named.
+  programs: [], listIndex: 0, pendingErase: null,
   // The four front-panel run switches. BLOCK DELETE and OPTION STOP are the
   // firmware's own on grblHAL ($B/$O — the parser skips, which also covers jobs
   // run from the machine's card); their lamps follow the Pn: report. SINGLE
@@ -142,6 +144,24 @@ function press (id) {
   // no lit screen to say it on. Only POWER ON gets through — which is exactly how
   // you learn a machine: the panel is dark and one button is not.
   if (!s.powered && id !== 'power-on') return
+
+  // §3.3.4 step 4: ERASE PROGRAM has asked, and this press is the answer. Y
+  // erases; everything else cancels and is swallowed, which is stricter than the
+  // manual's Y/N pair on purpose — an armed delete that outlived an unrelated
+  // keypress could go off later against whatever the cursor had moved to since,
+  // and this is the one action in the control with no UNDO behind it.
+  //
+  // RESET and E-STOP are the exception. They are never merely an answer to a
+  // prompt, so they cancel it and go on to do their own job.
+  if (s.pendingErase) {
+    const o = s.pendingErase
+    s.pendingErase = null
+    if (id !== 'reset' && id !== 'estop') {
+      if (id === 'alpha-y') return eraseConfirmed(o)
+      s.message = `${o} not erased`
+      return invalidate()
+    }
+  }
 
   // Say why, rather than swallow the press. A key that looks live and does
   // nothing teaches a student that the control is unreliable; one that explains
@@ -987,10 +1007,10 @@ function storeProgram (name, text) {
   const persisted = fileProgram(o, name, text)
 
   s.mode = 'EDIT'; s.fn = 'LIST'; s.activePane = 'list'
-  selectProgram()
+  selectHighlighted()
 
   // One message carrying everything the operator needs, set last because
-  // selectProgram writes its own. Two things must not get lost here: that we
+  // selectHighlighted writes its own. Two things must not get lost here: that we
   // invented the O-number when the file had none, and that storage refused —
   // a program that vanishes on reload without warning is worse than one that
   // never claimed to be saved.
@@ -1001,13 +1021,40 @@ function storeProgram (name, text) {
   invalidate()
 }
 
-/** Make the highlighted directory entry the program CYCLE START will run. */
-function selectProgram () {
+/**
+ * Load the highlighted directory entry as the active program.
+ *
+ * The plain half of SELECT PROGRAM, split out because two callers reach it with
+ * something else already decided: importing a file, and the typed-`Onnnnn` path
+ * below. Neither may go back through the keypad buffer — an import that consulted
+ * whatever was left in the input bar would select a program the operator never
+ * asked for and file the imported one out of sight.
+ */
+function selectHighlighted () {
   const p = selected()
   if (!p) { s.message = 'no program to select'; return invalidate() }
   s.program = { o: p.o, name: p.name, lines: prepare(p.text), current: 0 }
   s.message = `${p.o} selected — ${s.program.lines.length} blocks`
   invalidate()
+}
+
+/**
+ * SELECT PROGRAM. Two ways in, both the manual's.
+ *
+ * §3.3.2 step 2: highlight a program and press the key. §4.1 step 2: "Enter a
+ * program number (Onnnnn) and press [SELECT PROGRAM] or [ENTER]" — and if it
+ * does not exist the control creates it. The typed form goes through the same
+ * select-or-create path WRITE/ENTER uses, because the manual names the two keys
+ * in one breath and a student who types a number means the same by either.
+ */
+function selectProgram () {
+  const typed = s.input.trim()
+  if (!typed) return selectHighlighted()
+
+  const o = parseOWord(typed)
+  if (!o) { s.message = `type a program number, like O00010 — "${typed}" is not one`; return invalidate() }
+  s.input = ''
+  return selectOrCreateProgram(o)
 }
 
 function eraseProgram () {
@@ -1032,14 +1079,33 @@ function eraseProgram () {
   if (!p) { s.message = 'no program to erase'; return invalidate() }
   if (s.job) { s.message = 'cannot erase while a program is running'; return invalidate() }
 
-  s.programs.splice(s.listIndex, 1)
+  // §3.3.4: "You cannot delete the active program." The key refuses rather than
+  // deleting it and quietly unloading it — a control that empties the program
+  // pane out from under CYCLE START has done two things when it was asked for
+  // one, and the operator is told to pick another program instead.
+  if (p.o === s.program.o) {
+    s.message = `${p.o} is the active program — select another before erasing it`
+    return invalidate()
+  }
+
+  // §3.3.4 step 4: ask, then delete. The manual puts its own NOTE above this
+  // step — "You cannot undo this process… You cannot press [UNDO] to recover a
+  // deleted program" — and the prompt is the only thing standing between a
+  // mis-hit key and a program that is gone.
+  s.pendingErase = p.o
+  s.message = `erase ${p.o}? — Y to delete, N to cancel`
+  invalidate()
+}
+
+/** Y at the §3.3.4 prompt. Erases by O-number: the cursor may have moved since. */
+function eraseConfirmed (o) {
+  const at = s.programs.findIndex(p => p.o === o)
+  if (at < 0) { s.message = `${o} is no longer in the directory`; return invalidate() }
+
+  s.programs.splice(at, 1)
   s.listIndex = Math.max(0, Math.min(s.listIndex, s.programs.length - 1))
   const persisted = saveDirectory()
-
-  // Erasing the program that is loaded has to unload it too, or CYCLE START would
-  // run something the operator has just deleted from the directory.
-  if (s.program.o === p.o) s.program = { o: '', name: '', lines: [], current: 0 }
-  s.message = persisted ? `${p.o} erased` : `${p.o} erased, but browser storage refused — it will be back on reload`
+  s.message = persisted ? `${o} erased` : `${o} erased, but browser storage refused — it will be back on reload`
   invalidate()
 }
 
@@ -1145,18 +1211,18 @@ function offsetEntry (value, mode) {
   return writeOffset(mode === 'add' ? current + value : value)
 }
 
-/** `Onnnnn` from the LIST pane: select it, or create it — §3.3.2 step 2. */
+/** A typed `Onnnnn`: select it, or create it — §3.3.2 step 2, §4.1 step 2. */
 function selectOrCreateProgram (o) {
   const at = s.programs.findIndex(p => p.o === o)
   if (at >= 0) {
     s.listIndex = at
-    return selectProgram()
+    return selectHighlighted()
   }
   s.programs.push({ o, name: '(new)', text: o })
   s.programs.sort((a, b) => a.o.localeCompare(b.o))
   s.listIndex = s.programs.findIndex(p => p.o === o)
   const persisted = saveDirectory()
-  selectProgram()
+  selectHighlighted()
   s.message = `${o} created` + (persisted ? '' : ', but browser storage refused — it will vanish on reload')
   invalidate()
 }
