@@ -248,6 +248,10 @@ export const VERIFIED = new Set([
   // CHIP FWD/STOP drive the IO-5 relay (M31/M33), AUX CLNT the IO-0 TSC pump
   // (M88/M89) — wired 2026-08-07, watched acking on the bench, A:M for TSC.
   'chip-fwd', 'chip-stop', 'aux-coolant',
+  // F1 replaces the highlighted offset where WRITE/ENTER adds to it (§3.12
+  // p.104) — watched in the browser writing G54 X. F2-F4 are still unbuilt,
+  // and on a real HAAS F1 does nothing on most other pages either.
+  'f1',
   // ZERO RETURN as a mode — the bar reads SETUP: ZERO. `HOME G28` is a move to a
   // stored position rather than a homing search, so it needs no limit switches
   // and is verified: watched taking the machine from X15 Y8 Z12 back to zero.

@@ -114,6 +114,7 @@ export function serialTransport ({ baudRate = 115200 } = {}) {
   let closed = false
   let onLineCb = () => {}
   const splitter = new LineSplitter(line => onLineCb(line))
+  const writeFailed = (e) => { if (!closed) onLineCb(`[haasSender: serial write failed — ${e.message}]`) }
 
   return {
     kind: 'serial',
@@ -124,7 +125,18 @@ export function serialTransport ({ baudRate = 115200 } = {}) {
       if (!('serial' in navigator)) {
         throw new Error('Web Serial needs Chrome or Edge on localhost or HTTPS')
       }
-      port = await navigator.serial.requestPort()
+      closed = false
+
+      // A port the operator has already granted this origin comes back from
+      // getPorts() with NO dialog — so the picker is a once-per-browser
+      // ceremony rather than something a student answers every morning.
+      // requestPort() needs a user gesture, which is why it is the fallback
+      // and not the first move.
+      // ponytail: takes the first remembered port. Fine with one machine per
+      // seat; add a chooser if a bench ever has two boards plugged in.
+      const remembered = await navigator.serial.getPorts()
+      port = remembered[0] ?? await navigator.serial.requestPort()
+
       await port.open({ baudRate })
       writer = port.writable.getWriter()
 
@@ -145,8 +157,11 @@ export function serialTransport ({ baudRate = 115200 } = {}) {
       })()
     },
 
-    send (str) { writer?.write(new TextEncoder().encode(str)) },
-    sendRealtime (byte) { writer?.write(rawByte(byte)) },
+    // Writes are reported, not dropped. A pulled cable rejects the write, and
+    // an unhandled rejection would leave the operator with a control that
+    // looks fine until the staleness watchdog notices two seconds later.
+    send (str) { writer?.write(new TextEncoder().encode(str)).catch(writeFailed) },
+    sendRealtime (byte) { writer?.write(rawByte(byte)).catch(writeFailed) },
     onLine (cb) { onLineCb = cb },
 
     async disconnect () {

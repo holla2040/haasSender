@@ -15,17 +15,19 @@ Target hardware is the companion [grblhal-clearcore](../grblhal-clearcore) proje
 (Teknic ClearCore, 4-axis XYZA). Reference for the control's layout is the 2014
 Mill Operator's Manual in `reference/`; the pendant photos are in `images/`.
 
-Status: **complete except one deferred item.** A student imports a program, picks
+Status: **complete.** A student imports a program, picks
 it from control memory with LIST PROGRAM, sets work offsets and tool lengths on
 the OFFSET pages, edits blocks word by word in EDIT, types blocks in MDI, and runs
 the job with the run switches, overrides and cycle timers live. All thirteen
-display pages are real. 112 of the 132 keys work; 13 are faded because this
-control can never honour them; 7 are muted because they are not built yet — and
-pressing any of those 20 says which it is.
+display pages are real. 116 of the 132 keys work; 10 are faded because this
+control can never honour them; 6 are muted because they are not built yet — and
+pressing any of those 16 says which it is.
 
-**Web Serial is deferred and untested**: no USB board has ever been plugged in,
-and `requestPort()` opens a native picker only a person can answer. It is written
-up in [PLAN.md](PLAN.md) with what to check, rather than assumed to work.
+**All three transports are verified against hardware.** Web Serial was the last
+one, closed 2026-08-07: a 535-block program streamed over USB for two minutes
+without an error, the DRO tracked jogs to the increment, and the port survived a
+disconnect/reconnect cycle. The native port picker is answered **once per
+browser** — after that `getPorts()` reconnects with no dialog at all.
 
 ## Run it
 
@@ -71,7 +73,7 @@ lost connection.
 |---|---|
 | **Simulator** | A virtual grblHAL in the tab. No hardware. This is the classroom mode. |
 | **WebSocket** | `ws://<board>:81/`, **subprotocol `webui-v3`** |
-| **Web Serial** | 115200 8N1. Chrome/Edge, secure context only. ClearCore is `2890:8022`. |
+| **Web Serial** | 115200 8N1. Chrome/Edge, secure context only. ClearCore is `2890:8022`. Picker once, then silent reconnects. |
 
 **The `webui-v3` subprotocol is not optional.** Verified against the board: a
 socket opened with no subprotocol, or with `arduino`, completes the handshake and

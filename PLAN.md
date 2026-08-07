@@ -27,19 +27,21 @@ Ask early. An interruption is cheap; a plausible-looking detour is not.
 
 ## Where it stands
 
-All six phases are done except one item that needs a person at the bench. Of 132
-keys: **112 work**, **13 can never work** on this control, **7 are not built
-yet** — and separately, all five round pushbuttons work. All thirteen display
+All six phases are done, Web Serial included (2026-08-07). Of 132 keys:
+**116 work**, **10 can never work** on this control, **6 are not built yet** —
+and separately, all five round pushbuttons work. All thirteen display
 pages are real, and **nothing sits outside the pendant any more**: the transport
 picker, the machine address and the file import all live behind POWER ON, which
 is where a machine's power lives.
 
-The seven unbuilt: POWER UP RESTART, F1-F4, and ZERO RETURN's ALL and SINGLE
-(homing, untestable without limit switches).
+The six unbuilt: F2-F4, plus POWER UP RESTART and ZERO RETURN's ALL and SINGLE —
+all three of those are wired to `$H` and simply cannot be exercised until limit
+switches exist.
 
-**The one thing left is Web Serial**, which has never seen a USB board and cannot
-be tested without someone plugging one in — see phase 6. It is deferred, not
-assumed working.
+**CHIP FWD/STOP and AUX CLNT became real on 2026-08-07** — a pin trade freed
+IO-5 (chip conveyor relay, firmware `M31`/`M33`) and IO-0 (through-spindle
+coolant pump, `M88`/`M89`); the probe moved to A-12. CHIP REV stays faded: one
+relay, no reverse.
 
 | | |
 |---|---|
@@ -55,7 +57,7 @@ assumed working.
 | EDIT word cursor, INSERT/ALTER/DELETE/UNDO, MDI | done |
 | Alarms pane with causes and recovery, SHIFT for `$` | done |
 | All thirteen display pages | done |
-| Web Serial against a real USB board | **deferred — never tested, needs a board plugged in** |
+| Web Serial against a real USB board | done 2026-08-07 — 535 blocks streamed clean over USB |
 
 ## The bench
 
@@ -405,20 +407,23 @@ The fiddliest behaviour in the project. Budget accordingly.
 
 - [x] WebSocket to the ClearCore (`webui-v3`), verified
 - [x] Install to SD `/www`, served from the board, verified
-- [ ] **Web Serial against real hardware — DEFERRED, and untested on purpose.**
-      No USB board has ever been plugged in. The code path exists and has had one
-      bug fixed by inspection, which makes it plausible and unproven, and this
-      project's whole ethic is not shipping that state silently — so it is written
-      down here rather than quietly assumed to work.
-      **It cannot be tested without a person at the bench.** `navigator.serial
-      .requestPort()` opens a native port picker that only a human gesture can
-      answer; no amount of scripting reaches it.
-      **To close it:** plug the ClearCore in over USB (it enumerates as
-      `2890:8022`), open `http://localhost:8000`, choose *USB serial* in the dev
-      strip and press Connect. Then check the four things the websocket transport
-      needed: that `$I` comes back, that the DRO tracks a jog, that a program
-      streams without a buffer overrun (watch `Bf:`), and that pulling the cable
-      trips the staleness watchdog to `LINK DOWN`.
+- [x] **Web Serial against real hardware — DONE 2026-08-07**, the owner clicking
+      the port picker once. All four checks passed: `$I` came back and the mode
+      bar read `Idle SERIAL`; the DRO tracked two 0.1" jog increments exactly
+      (-3.7776 → -3.5776); a **535-block program streamed for 2m07s with no
+      error**, spindle and feed tracking; and POWER OFF blanked every reading to
+      `LINK DOWN`, after which the port reopened cleanly — the failure mode that
+      used to need a page reload.
+      **Two fixes made it work.** The firmware was echoing every received
+      character back on the USB CDC stream (hang-chase-era instrumentation), so
+      the sender would have parsed its own commands back as unsolicited lines —
+      removed in `usb_serial.c`. And the transport now tries
+      `navigator.serial.getPorts()` before `requestPort()`: a port the operator
+      has already granted comes back with **no dialog**, making the picker a
+      once-per-browser ceremony rather than a daily ritual. Write failures are
+      reported too, so a pulled cable cannot become an unhandled rejection.
+      **Still unproven:** nobody has physically yanked the cable mid-job — the
+      clean POWER OFF is evidence, not proof, for that exact path.
       **Web Serial needs a secure context**, so this works from `localhost` and
       *not* from the board-served page over plain HTTP.
 - [x] Alarms pane: a history, newest first, with the grbl code, the plain-English
@@ -486,6 +491,16 @@ Things that cost real time to discover. Do not re-derive them.
   talk to it directly. Serving from the board is same-origin anyway.
 - **Web Serial needs a secure context.** Available on `localhost`, absent on the
   board-served page over plain HTTP.
+- **`navigator.serial.getPorts()` needs no user gesture** — it returns the ports
+  this origin was already granted, so only the FIRST connection opens a picker.
+  Try it before `requestPort()` or every session begins with a dialog.
+- **A grbl stream must not echo.** The ClearCore's USB CDC path echoed received
+  characters back (debug instrumentation); the sender then parses its own
+  commands as unsolicited lines. Removed 2026-08-07 — worth checking first if a
+  serial transport ever looks "connected but full of noise".
+- **A soft reset mid-motion leaves the machine in Alarm.** Correct grbl: the
+  position is uncertain after an abrupt stop. `$X` clears it, which the pendant
+  can now type (SHIFT reaches `$`).
 - **The SD upload needs two things the API docs do not mention.** The multipart
   file part's filename must be the **full destination path** (`/www/index.html.gz`,
   not `index.html.gz`), and a companion field named `<path>S` must carry the byte
