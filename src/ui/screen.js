@@ -14,6 +14,15 @@ const TODO_KEYS = Object.values(GROUPS).flatMap(g => g.rows.flat())
 
 const AXES = ['X', 'Y', 'Z', 'A']
 
+// Rows a scrolling pane shows at once — and therefore how far PAGE UP and PAGE
+// DOWN may step. A step bigger than the window scrolls past rows the operator
+// never sees, which is not paging, it is skipping.
+export const PANE_ROWS = 8
+
+/** First row on screen: the cursor kept mid-window, then clamped to the list. */
+export const paneFrom = (row, total, rows = PANE_ROWS) =>
+  Math.max(0, Math.min(row - Math.floor(rows / 2), total - rows))
+
 /**
  * A machine readout. When no status report has arrived for a while every number
  * on this screen is a memory rather than a reading, so show nothing at all: a
@@ -148,9 +157,11 @@ setting, so a program commanding G20 or G21 changes it too.</span></pre>`
 function toolBody (s) {
   const k = displayScale(s.reportUnits, s.units)
   const inches = s.units === 'IN'
-  const from = Math.max(0, Math.min(s.toolRow - 3, TOOL_COUNT - 7))
+  // One row of this pane is spent on the column heading.
+  const rows = PANE_ROWS - 1
+  const from = paneFrom(s.toolRow, TOOL_COUNT, rows)
   return html`<pre>  TOOL     LENGTH (Z)
-${Array.from({ length: 7 }, (_, i) => {
+${Array.from({ length: rows }, (_, i) => {
     const n = from + i + 1
     const v = s.tools[n]
     return html`<div>  T${String(n).padStart(2, '0')}  ${
@@ -195,8 +206,8 @@ on the page. CYCLE START runs the whole page,
 ERASE PROGRAM clears it.
 <span class="k">&gt; ${s.input}_</span></pre>`
   }
-  const from = Math.max(0, Math.min(s.editRow - 4, lines.length - 8))
-  return html`<pre>${lines.slice(from, from + 8).map((l, i) => {
+  const from = paneFrom(s.editRow, lines.length)
+  return html`<pre>${lines.slice(from, from + PANE_ROWS).map((l, i) => {
     const row = from + i
     return html`<div class=${(l.error ? 'k' : '') + (l.del && s.blockDelete ? ' skipped' : '')}
       >${row === s.mdi.current - 1 ? '▶' : ' '} ${
@@ -270,8 +281,8 @@ function paramBody (s) {
 Press WRITE/ENTER on an empty input bar
 here to ask the machine for $$.</pre>`
   }
-  const from = Math.max(0, Math.min(s.paramRow - 4, keys.length - 8))
-  return html`<pre>${keys.slice(from, from + 8).map((k, i) => html`<div
+  const from = paneFrom(s.paramRow, keys.length)
+  return html`<pre>${keys.slice(from, from + PANE_ROWS).map((k, i) => html`<div
     class=${from + i === s.paramRow ? 'cur' : ''}>${('  $' + k + '       ').slice(0, 7)}${
     ('          ' + s.settings[k]).slice(-11)}  <span class="dim">${
     describeSetting(k) ?? '—'}</span></div>`)}<span class="dim">Read-only, and the machine's own. $13 decides what MPos: means.</span></pre>`

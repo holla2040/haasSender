@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS } from '../src/ui/screen.js'
+import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, paneFrom } from '../src/ui/screen.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
 // keeps showing its last value after the link drops is the same lie as a
@@ -73,4 +73,20 @@ test('the section jumps land on section starts, in order', () => {
   assert.equal(HELP_SECTIONS[0], 0)
   assert.deepEqual(HELP_SECTIONS, [...HELP_SECTIONS].sort((a, b) => a - b))
   for (const i of HELP_SECTIONS) assert.match(HELP[i][1], /^── /)
+})
+
+// The bug: PARAMETER showed 8 rows and PAGE DOWN stepped 12, so four settings
+// scrolled by between screens and were never on one. A page step may be no
+// larger than the window it turns.
+test('paging a pane shows every row on the way past', () => {
+  for (const rows of [PANE_ROWS, PANE_ROWS - 1]) {
+    const total = 40
+    const seen = new Set()
+    for (let row = 0; ; row = Math.min(total - 1, row + rows)) {
+      const from = paneFrom(row, total, rows)
+      for (let i = 0; i < rows; i++) seen.add(from + i)
+      if (row === total - 1) break
+    }
+    assert.equal(seen.size, total, `a ${rows}-row pane skipped a row paging by ${rows}`)
+  }
 })

@@ -2,7 +2,7 @@ import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
-import { screen, displayScale, HELP_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
+import { screen, displayScale, HELP_ROWS, PANE_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
@@ -192,7 +192,8 @@ function press (id) {
 
   // TOOL OFFSET: one column, so the cursor only walks rows.
   if (s.activePane === 'offset' && s.offsetPage === 'tool') {
-    const dr = { up: -1, down: 1, 'page-up': -10, 'page-down': 10 }[id]
+    // One short of PANE_ROWS: the tool pane spends a row on its heading.
+    const dr = { up: -1, down: 1, 'page-up': 1 - PANE_ROWS, 'page-down': PANE_ROWS - 1 }[id]
     if (dr !== undefined) {
       s.toolRow = Math.max(0, Math.min(TOOL_COUNT - 1, s.toolRow + dr))
       return invalidate()
@@ -225,7 +226,7 @@ function press (id) {
   if (editing()) {
     const move = {
       left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1],
-      'page-up': [0, -12], 'page-down': [0, 12]
+      'page-up': [0, -PANE_ROWS], 'page-down': [0, PANE_ROWS]
     }[id]
     if (move) return moveCursor(...move)
     if (id === 'home') { s.editRow = 0; s.editWord = 0; return invalidate() }
@@ -254,7 +255,7 @@ function press (id) {
   // PARAMETER / DIAGNOSTIC: the cursor walks the machine's settings, read-only.
   if (s.activePane === 'param') {
     const n = Object.keys(s.settings).length
-    const dr = { up: -1, down: 1, 'page-up': -12, 'page-down': 12 }[id]
+    const dr = { up: -1, down: 1, 'page-up': -PANE_ROWS, 'page-down': PANE_ROWS }[id]
     if (dr !== undefined && n) {
       s.paramRow = Math.max(0, Math.min(n - 1, s.paramRow + dr))
       return invalidate()
