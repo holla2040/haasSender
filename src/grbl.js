@@ -237,14 +237,13 @@ const HAAS_NOTES = [
   [/\bM0*1[78]\b/i, 'M17/M18 are pallet-changer commands — no pallet changer fitted.'],
   [/\bM0*19\b/i, 'M19 orient spindle needs a spindle encoder — nothing here can hold an angle.'],
   [/\bM0*2[1-8]\b/i, 'M21-M28 fire user relays with M-Fin — no such relays are wired.'],
-  [/\bM0*3[13]\b/i, 'M31/M33 drive the chip conveyor — none fitted.'],
   [/\bM0*3[45]\b/i, 'M34/M35 move the P-Cool spigot — no programmable coolant fitted.'],
   [/\bM0*39\b/i, 'M39 rotates the tool turret — no tool changer fitted.'],
   [/\bM0*4[12]\b/i, 'M41/M42 are spindle gear overrides — this spindle has no gearbox.'],
   [/\bM0*4[89]\b|\bM0*5\d\b/i, 'M48-M59 are program-check, pallet and relay codes this machine does not have.'],
   [/\bM0*6[1-9]\b/i, 'M61-M69 user I/O: every output pin on this controller is already spoken for.'],
   [/\bM0*7[589]\b/i, 'M75/M78/M79 are probing codes — no probe system fitted.'],
-  [/\bM0*8[0-9]\b/i, 'M80-M89 drive doors, air guns, clamps and through-spindle coolant — none fitted.'],
+  [/\bM0*8[0-7]\b/i, 'M80-M87 drive doors, air guns and tool clamps — none fitted.'],
   [/\bM0*9[56]\b/i, 'M95 sleep / M96 input-jump are not supported on this control.'],
   [/\bM109\b/i, 'M109 interactive input needs the macro system — not built here.']
 ]

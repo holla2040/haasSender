@@ -497,6 +497,7 @@ const lit = (s) => html`
       ['INC ' + s.increment, 'HANDLE ' + 'XYZA'[s.jogAxis], s.shifted && 'SHIFT',
         s.singleBlock && 'SNGL BLK', s.dryRun && 'DRY RUN', s.optionStop && 'OPT STOP',
         s.blockDelete && 'BLK DEL',
+        s.chipFwd && 'CHIP FWD', s.tsc && 'TSC',
         s.jogLock && (s.latched !== null ? 'JOG LOCK ▶ ' + 'XYZA'[s.latched] : 'JOG LOCK'),
         s.handleMode !== 'jog' && 'HANDLE ' + s.handleMode.toUpperCase()]
         .filter(Boolean).join('   ')

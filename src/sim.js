@@ -25,7 +25,7 @@ const G_SUPPORTED = new Set([
   50, 51, 53, 54, 55, 56, 57, 58, 59, 59.1, 59.2, 59.3, 61,
   73, 80, 81, 82, 83, 85, 86, 89, 90, 91, 92, 92.1, 93, 94, 98, 99
 ])
-const M_SUPPORTED = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 30])
+const M_SUPPORTED = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 30, 31, 33, 88, 89])
 const MOTION_GROUP = new Set([0, 1, 2, 3, 73, 80, 81, 82, 83, 85, 86, 89])
 const CYCLES = new Set([73, 81, 82, 83, 85, 86, 89])
 const N_SIM_TOOLS = 32     // matches N_TOOLS on the branch firmware
@@ -549,7 +549,9 @@ export class VirtualGrbl {
       if (v === 3) effects.push(() => { this.spindleDir = 1; this.spindle = this.commandedRpm ?? 0 })
       else if (v === 4) effects.push(() => { this.spindleDir = -1; this.spindle = this.commandedRpm ?? 0 })
       else if (v === 5) effects.push(() => { this.spindleDir = 0; this.spindle = 0 })
-      else if (v === 7) effects.push(() => { this.mist = true })
+      else if (v === 7 || v === 88) effects.push(() => { this.mist = true })
+      else if (v === 89) effects.push(() => { this.mist = false })
+      else if (v === 31 || v === 33) effects.push(() => { this.chipFwd = v === 31 })
       else if (v === 8) effects.push(() => { this.flood = true })
       else if (v === 9) effects.push(() => { this.flood = false; this.mist = false })
       else if (v === 0) effects.push(() => { this.state = 'Hold' })

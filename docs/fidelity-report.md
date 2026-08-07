@@ -117,6 +117,27 @@ the end of each section so they don't get re-litigated.
   `grblhal-clearcore/docs/error-latch-repro.md` has the full story, and
   g28-false-alarm.md is thereby fully explained).
 
+## Morning I/O pass, 2026-08-07 — CHIP and AUX CLNT are real now
+
+The owner's question ("can the chip/CLNT keys get pins?") became a pin trade,
+bench-verified end to end:
+
+- **IO-0 freed** (debug console off) → it is the mist output again, and the
+  **AUX CLNT key drives it as the TSC pump** via new firmware M-codes
+  `M88`/`M89` riding the coolant mist channel — the lamp follows `A:M` in
+  the status report, watched on the bench.
+- **IO-5 freed** (probe moved to A-12; the hardware CYCLE START input it
+  displaced was never wired — cycle start stays soft) → **CHIP FWD / CHIP
+  STOP drive a conveyor relay** via new `M31`/`M33` (DRV8844 ch1, EN PB03 /
+  IN PB12, coil from Vsupply to IO-5 per the hardware manual).
+- CHIP REV stays faded with a new honest reason: single relay, no reverse.
+- Key states: UNAVAILABLE 13→10, VERIFIED 112→115. Sim implements all four
+  M-codes; the HAAS-notes table dropped its M31/M33 row and narrowed
+  M80-M89 to M80-M87. Icon bar shows CHIP FWD and TSC.
+- A first attempt registered IO-5 with the core ioports layer and it faulted
+  driver_setup (board dead until reflash over the ICE); replaced with a
+  two-line driver helper. ponytail: ioports return when a second aux pin exists.
+
 **Still open (biggest first):** Run-Stop-Jog-Continue; the MISSING backlog
 (G70-72 bolt patterns, M48 pre-flight, M76/M77, instructor-lockout settings
 group, timers pane Remaining/M30 #2, beacon states); Web Serial bench test

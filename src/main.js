@@ -58,7 +58,7 @@ const s = {
   wcs: 'G54', units: 'MM', reportUnits: 'MM', incIndex: 1,
   machineState: '—', link: 'OFFLINE', stale: true, feed: 0, spindle: 0, spindleDir: 0,
   ov: { feed: 100, rapid: 100, spindle: 100 },
-  tool: 0, tlo: 0, coolant: false, jogLock: false,
+  tool: 0, tlo: 0, coolant: false, tsc: false, chipFwd: false, jogLock: false,
   alarm: null, message: '', input: '',
   // Control memory: the program directory, filed by O-number the way a HAAS files
   // it, and whichever one is currently selected to run.
@@ -285,6 +285,13 @@ function press (id) {
     // The manual: CW/CCW start the spindle at the COMMANDED speed. Overwriting
     // the S the student just set with a hardcoded number taught a wrong lesson;
     // the last commanded S rides in the $G modal string. 1000 only from cold.
+    // The chip conveyor is a single relay (IO-5): FWD runs it, STOP stops it,
+    // REV stays honestly impossible. AUX CLNT is the TSC pump on the mist
+    // channel (IO-0) — its lamp follows the A: report, not this key.
+    case 'chip-fwd': s.chipFwd = true; return send('M31')
+    case 'chip-stop': s.chipFwd = false; return send('M33')
+    case 'aux-coolant': return send(s.tsc ? 'M89' : 'M88')
+
     case 'spindle-cw': return send(`M3 S${modalS() ?? 1000}`)
     case 'spindle-ccw': return send(`M4 S${modalS() ?? 1000}`)
     case 'spindle-stop': return send('M5')
@@ -1437,6 +1444,7 @@ function applyStatus (st) {
   if (st.accessory !== undefined) {
     s.spindleDir = st.accessory.includes('S') ? 1 : st.accessory.includes('C') ? -1 : 0
     s.coolant = st.accessory.includes('F')
+    s.tsc = st.accessory.includes('M')     // the TSC pump rides the mist bit
   }
   // A latched jog that ran to the end of its travel, or was cancelled, is over —
   // the lamp must not go on claiming the machine is still moving.

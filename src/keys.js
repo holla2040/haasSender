@@ -245,6 +245,9 @@ export const VERIFIED = new Set([
   // the rotary pair drives the fourth axis, and the board has one: `[AXS:4:XYZA]`.
   // Watched A go 5.000 → 25.000 → 15.000 on the real machine.
   'jog-b-plus', 'jog-a-plus',
+  // CHIP FWD/STOP drive the IO-5 relay (M31/M33), AUX CLNT the IO-0 TSC pump
+  // (M88/M89) — wired 2026-08-07, watched acking on the bench, A:M for TSC.
+  'chip-fwd', 'chip-stop', 'aux-coolant',
   // ZERO RETURN as a mode — the bar reads SETUP: ZERO. `HOME G28` is a move to a
   // stored position rather than a homing search, so it needs no limit switches
   // and is verified: watched taking the machine from X15 Y8 Z12 back to zero.
@@ -323,9 +326,7 @@ export const UNAVAILABLE = new Map([
 
   // A hobby-class grblHAL mill has no chip conveyor and no tool changer, and the
   // bench ClearCore has no mechanics attached at all.
-  ['chip-fwd', 'no chip conveyor fitted to this machine'],
-  ['chip-stop', 'no chip conveyor fitted to this machine'],
-  ['chip-rev', 'no chip conveyor fitted to this machine'],
+  ['chip-rev', 'no reverse — the conveyor output is a single relay (M31/M33 only)'],
 
   ['next-tool', 'no tool changer fitted to this machine'],
   ['tool-release', 'no tool changer fitted to this machine'],
@@ -337,7 +338,6 @@ export const UNAVAILABLE = new Map([
   // spigot does not.
   ['coolant-up', 'no programmable coolant fitted to this machine'],
   ['coolant-down', 'no programmable coolant fitted to this machine'],
-  ['aux-coolant', 'no through-spindle coolant (TSC) fitted to this machine'],
 
   // Spindle orientation. A grbl machine has no such thing — there is no encoder
   // and no closed loop to hold an angle, so `M19` is not a gap in this build, it

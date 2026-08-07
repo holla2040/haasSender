@@ -231,7 +231,7 @@ test('G81 drills and retracts; unsupported codes answer error:20, unused words e
   write('G0 Z5\n'); run(5)
   write('G81 Z-1.5 R0.1 F600\n'); run(30)
   assert.ok(Math.abs(m.mpos[2] - 5) < 1e-6, `G98 return to initial Z, got ${m.mpos[2]}`)
-  write('G41 D1\nM31\nG1 X5 F100 Q5\n')
+  write('G41 D1\nM39\nG1 X5 F100 Q5\n')
   assert.deepEqual(out.filter(l => l.startsWith('error:')), ['error:20', 'error:20', 'error:36'])
 })
 
@@ -335,4 +335,17 @@ test('G86 bores, stops the spindle at the bottom, and requires P like the board'
   assert.equal(b.m.state, 'Idle')
   assert.equal(b.m.spindleDir, 0, 'spindle stopped at the bottom')
   assert.ok(Math.abs(b.m.mpos[2] - 5) < 1e-6, 'rapid retract to initial Z')
+})
+
+test('the chip conveyor and TSC M-codes work like the bench board', () => {
+  const { m, write, run } = bench()
+  write('M31\n'); run(0.2)
+  assert.equal(m.chipFwd, true)
+  write('M33\n'); run(0.2)
+  assert.equal(m.chipFwd, false)
+  write('M88\n'); run(0.2)
+  assert.equal(m.mist, true, 'TSC rides the mist bit — A:M on the wire')
+  assert.match(m.statusReport(), /\|A:.*M/)
+  write('M89\n'); run(0.2)
+  assert.equal(m.mist, false)
 })
