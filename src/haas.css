@@ -482,15 +482,19 @@ body {
   grid-template-columns: .77fr 1fr .8fr .55fr;
   grid-template-rows: auto auto 1fr auto auto auto;
   /* Bottom band per the manual's prose: input bar "bottom, left corner"
-     (p.53), status bar "bottom, center" (p.51), alarm at the right — with the
-     icon bar a full-width band above them, not squatting in the input bar's
-     corner. */
+     (p.53), status bar "bottom, center" (p.51), alarm at the right — not the
+     icon bar squatting in the input bar's corner.
+
+     The icon bar's left edge sits under POSITION rather than under the spindle
+     pane, so MAIN SPINDLE takes the whole left column of both rows — the room
+     its four readings (RPM, DIR, FEED and the three overrides, all of which
+     F2.34 puts in this pane) need at the doubled type they are watched at. */
   grid-template-areas:
     "modebar modebar modebar modebar"
     "program codes   tool    coolant"
     "program main    main    main"
     "spindle position position timers"
-    "icons   icons   icons   icons"
+    "spindle icons   icons   icons"
     "input   status  status  alarm";
 }
 
