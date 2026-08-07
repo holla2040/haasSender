@@ -151,6 +151,30 @@ parser would teach nothing.
 
 ---
 
+## OPERATION:MEM row verified end to end, 2026-08-07 (tests 80/80 green)
+
+All five keys of the MEM row (T2.6 p.38) driven against the sim seat with a
+program carrying a `/` block, an `M01`, an `M3 S1000` and a `G1 F500`:
+
+- **MEMORY** — mode bar `OPERATION: MEM`.
+- **SINGLE BLOCK** — one block per CYCLE START, watched stepping `G21 G90`,
+  `M3 S1000` (RPM 1000 FWD) and `G0 X10` (X→10.000) one press at a time.
+- **DRY RUN** — `M3` stripped so the spindle never started (RPM 0, DIR —) and
+  every `F` substituted with the jog-rate feed: `F500` reached the machine as
+  `F25.4` (T2.8 bottom legend, MM index 1), confirmed in the modal string.
+- **OPTION STOP** — toggled mid-job (realtime `0x88`), machine went `Hold:0`
+  at the `M01`, CYCLE START resumed it.
+- **BLOCK DELETE** — `BLK DEL` lamp from the `Pn:` report, `/G0 X20` greyed in
+  both listings **and skipped at the machine**: X stayed 10.000 across it.
+
+**One real bug found and fixed.** Turning SINGLE BLOCK *off* mid-program
+stalled the job permanently: `pump()` runs only from `start()`, `release()` and
+an incoming `ok`, and in single block the last `ok` has already arrived, so
+clearing the switch left the remaining blocks unsent with the machine idle and
+CYCLE START answering "already running" forever. `Streamer.setSingleBlock()`
+now owns the invariant and both call sites go through it; a regression test
+fails without the pump. Pre-existing — it is not in the MDI change below.
+
 ## MDI pass, 2026-08-07 — W3/W4/W6 closed (tests 79/79 green)
 
 MDI was a command line: ENTER sent the typed text to the machine and kept a

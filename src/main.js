@@ -804,7 +804,7 @@ function writeToolToMachine (n, machineZ) {
  */
 function toggleSwitch (key, label) {
   s[key] = !s[key]
-  if (key === 'singleBlock' && streamer) streamer.singleBlock = s.singleBlock
+  if (key === 'singleBlock' && streamer) streamer.setSingleBlock(s.singleBlock)
   s.message = `${label} ${s[key] ? 'ON' : 'OFF'}` +
     (s.job && key !== 'singleBlock' ? ' — takes effect at the next CYCLE START' : '')
   return invalidate()
@@ -1376,7 +1376,7 @@ function cycleStart () {
   if (!isMdi) { s.mode = 'OPERATION'; s.fn = 'MEM'; s.activePane = 'position' }
   s.cycleStartedAt = Date.now(); s.cycleMs = 0
   s.job = { sentAll: false, rows, prog: run, mdi: isMdi }
-  streamer.singleBlock = s.singleBlock
+  streamer.setSingleBlock(s.singleBlock)
   streamer.start(wire)
   if (s.singleBlock) streamer.release()
   invalidate()

@@ -329,6 +329,22 @@ export class Streamer {
     this.pump()
   }
 
+  /**
+   * The SINGLE BLOCK switch. Always set it through here rather than assigning the
+   * field, because turning it OFF mid-program has to restart the pipeline.
+   *
+   * `pump()` runs from `start()`, `release()` and an incoming `ok` — and in single
+   * block the last `ok` arrived before the operator touched the key, so nothing
+   * would ever send the rest of the program. The job stayed open with the machine
+   * idle and CYCLE START answering "already running" forever. Watched on the sim
+   * seat, 2026-08-07: a program stepped to block 4, switch off, and the remaining
+   * blocks never went out.
+   */
+  setSingleBlock (on) {
+    this.singleBlock = on
+    if (!on) this.pump()
+  }
+
   get total () { return this.lines.length }
   get done () { return this.acked >= this.lines.length }
 

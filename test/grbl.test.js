@@ -194,6 +194,26 @@ test('SINGLE BLOCK sends exactly one block per release', () => {
   assert.deepEqual(sent, ['G0 X1', 'G0 X2', 'G0 X3'])
 })
 
+// The bug this exists to stop, watched on the sim seat: a program stepped block
+// by block, then SINGLE BLOCK switched OFF mid-run, and the rest never went out.
+// pump() is driven by start(), release() and an incoming `ok` — and in single
+// block the last `ok` has already arrived, so clearing the switch has to pump or
+// the job hangs forever with the machine idle and CYCLE START saying "already
+// running". Assign `singleBlock` directly and this test fails.
+test('SINGLE BLOCK switched off mid-program lets the rest of it stream', () => {
+  const sent = []
+  const s = new Streamer(w => sent.push(w.trimEnd()), 1024)
+  s.setSingleBlock(true)
+  s.start(['G0 X1', 'G0 X2', 'G0 X3'])
+
+  s.release()
+  s.onLine('ok')                       // block 1 done, nothing released behind it
+  assert.deepEqual(sent, ['G0 X1'], 'still stepping')
+
+  s.setSingleBlock(false)
+  assert.deepEqual(sent, ['G0 X1', 'G0 X2', 'G0 X3'], 'the rest streams at once')
+})
+
 test('Streamer halts on error and remembers which line failed', () => {
   const s = new Streamer(() => {}, 128)
   s.start(['G0 X1', 'BOGUS', 'G0 X2'])
