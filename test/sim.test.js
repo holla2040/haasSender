@@ -298,3 +298,41 @@ test('$# prints all 32 tool rows, zeros included, exactly like the board', () =>
   assert.ok(rows[2].startsWith('[T:3|0.000,0.000,-20.000'))
   assert.ok(rows[0].startsWith('[T:1|0.000,0.000,0.000'), 'unset tools print as zero rows')
 })
+
+import { readFileSync } from 'node:fs'
+import { wireProgram } from '../src/grbl.js'
+
+test('the cross-environment fixture runs identically on the sim seat', () => {
+  // The same file runs three ways: here (streamed+expanded), bench-streamed,
+  // and $F= DNC where the board's own M97/M98 take over. Same end state is
+  // the pass bar for all three.
+  const main = prepare(readFileSync(new URL('./fixtures/O0100.nc', import.meta.url), 'utf8'))
+  const sub = prepare(readFileSync(new URL('./fixtures/O0200.nc', import.meta.url), 'utf8'))
+  const { wire } = wireProgram(main, {
+    caps: { runSwitches: true, toolTable: true },
+    getProgram: (n) => n === 200 ? sub : null
+  })
+  const { m, write, run } = bench()
+  for (const line of wire) {
+    write(line + '\n')
+    run(20)
+    if (m.state === 'Hold') { m.realtime(0x7E); run(20) }   // the M6 pause
+  }
+  run(60)
+  assert.equal(m.state, 'Idle')
+  // The DNC leg on the real board ended exactly here (2026-08-07):
+  // X two M97 passes, Y the M98 sub, and Z at 10 - 25.4 because a same-block
+  // G49 does not lift the offset from its own move.
+  assert.deepEqual(m.mpos.map(v => Number(v.toFixed(3))), [10, 2, -15.4, 0])
+})
+
+test('G86 bores, stops the spindle at the bottom, and requires P like the board', () => {
+  const a = bench()
+  a.write('M3 S1000\nG0 Z5\nG86 Z-2 R1 F500\n')
+  assert.equal(a.out.filter(l => l.startsWith('error:')).pop(), 'error:28')
+  const b = bench()
+  b.write('M3 S1000\nG0 Z5\nG86 P0 Z-2 R1 F500\n'); b.run(30)
+  assert.equal(b.m.state, 'Idle')
+  assert.equal(b.m.spindleDir, 0, 'spindle stopped at the bottom')
+  assert.ok(Math.abs(b.m.mpos[2] - 5) < 1e-6, 'rapid retract to initial Z')
+})

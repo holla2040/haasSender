@@ -363,7 +363,23 @@ Browser pass list (sim mode, foregrounded tab):
   white active pane.
 - §1: jogAxis `$J=` into a machine in Hold (grbl rejects).
 
-*(browser pass pending — Chrome extension not connected at time of writing)*
+Browser pass results (2026-08-07, sim seat, element-dispatched keys):
+- **W1 ENTER-adds**: entries 25 then +3 read back from `$#` as 28.000 ✓
+- **W2/F1-replace**: F1 on the 28.000 cell with "2" typed → "G54 X set to
+  2.0000" ✓
+- **W5**: typed `O99321` + ENTER on LIST created `(new)`, marked `A`,
+  selected ✓; an existing number selects instead ✓
+- **K3/W4**: ERASE PROGRAM in MDI → "MDI cleared", directory untouched ✓
+- **D1/D3**: bottom band and MAIN SPINDLE placement confirmed rendered ✓
+- K4 wheel-jog-in-SETUP and the D2 run-screen render: code-verified
+  (one-line gates); live observation blocked by background-tab timer
+  throttling (the repo's documented Chrome trap) — first foreground use
+  will show them.
+- Cross-environment fixture: sim and `$F=` DNC legs both end at
+  [10.000, 2.000, −15.400] ✓ (see §6 addendum).
+- Stock regression (main firmware flashed): `[OPT:…,4,0]`, no EXPR, G43 H1
+  → error:20, and the sender's fallback `G43.1 Z-25.4` → `[TLO:−25.400]` ✓;
+  branch firmware restored and re-seeded afterwards.
 
 ### Headless sim verification (empirical, Node — same code a classroom seat runs)
 

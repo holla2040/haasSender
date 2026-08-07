@@ -430,6 +430,11 @@ export function wireLine (t, { tools = {}, caps = {} } = {}) {
   t = t.replace(/\bM0*16\b/i, 'M6')                              // M16 = M06 synonym
   t = t.replace(/\bG154\s*P0*([1-3])\b/i, (_, p) => `G59.${p}`)  // P4+ passes through; the board's error is the honest answer
 
+  // HAAS G86 (Bore and Stop) has no dwell word; grblHAL's G86 requires P on a
+  // cycle change (it shares G82's validation — gcode.c:3382). P0 is the HAAS
+  // meaning: stop and retract with no dwell. Bench-verified.
+  if (/\bG0*86\b/i.test(t) && !/\bP[\d.]/i.test(t)) t = t.replace(/\bG0*86\b/i, 'G86 P0')
+
   // HAAS `G51 P<f>` (uniform scale, no centre) → the board's MACH3 form, where
   // the AXIS WORDS are the factors (bench-verified: G51 X2 doubled a G0 X10).
   // A G51 that names a centre point passes through untouched and the board's

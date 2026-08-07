@@ -373,7 +373,11 @@ export class VirtualGrbl {
         return fail('error:20')                 // ponytail: L10/L11 not modelled — sender writes absolute via L1
     }
 
-    if (g.includes(49)) this.tloZ = 0
+    // G49 is deferred to after this block's targets are computed: on the bench,
+    // `G49 G0 Z10.` moved to work Z10 under the OLD offset (machine -15.4 with
+    // TLO -25.4) — cancellation touches the NEXT block, while G43 H in a block
+    // DOES shift that block's own move (PLAN.md: G43 H3 Z50. landed at 30.000).
+    const g49 = g.includes(49)
     if (g.includes(43)) {                        // native tool-table TLO, branch firmware
       if (!w.has('H')) return fail('error:28')
       const h = Math.round(w.get('H')); w.delete('H')
@@ -454,7 +458,9 @@ export class VirtualGrbl {
       axis.delete(2); w.delete('R'); w.delete('P'); w.delete('Q')
       if (c.z === undefined || c.r === undefined) return fail('error:28')
       if ((c.code === 73 || c.code === 83) && !(c.q > 0)) return fail('error:28')
-      if (c.code === 86) return fail('error:28')   // bench 2026-08-07: the board answers 28; mirror it until the missing word is identified
+      // The board requires a fresh P when CHANGING to G82/G86/G89 (shared
+      // validation, gcode.c:3382-3388; G86's "missing word" was P — bench).
+      if (cycleCode !== undefined && (c.code === 82 || c.code === 86 || c.code === 89) && c.p === undefined) return fail('error:28')
       if (this.feed <= 0) return fail('error:22')
 
       const L = w.has('L') ? Math.max(0, Math.round(w.get('L'))) : 1
@@ -491,7 +497,8 @@ export class VirtualGrbl {
           } else {
             path.push({ target: [x, y, bottom, a], rate: this.feed, rapid: false })
           }
-          if ((c.code === 82 || c.code === 89) && c.p > 0) path.push({ dwell: c.p })
+          if ((c.code === 82 || c.code === 86 || c.code === 89) && c.p > 0) path.push({ dwell: c.p })
+          if (c.code === 86) path.push({ effect: () => { this.spindleDir = 0; this.spindle = 0 } })
           const backTo = this.retract98 ? initialZ : rZ
           const feedBack = c.code === 85 || c.code === 89
           path.push({ target: [x, y, backTo, a], rate: feedBack ? this.feed : this.rapidRate, rapid: !feedBack })
@@ -556,6 +563,8 @@ export class VirtualGrbl {
     }
 
     if (w.size || axis.size) return fail('error:36')      // unused words
+
+    if (g49) this.tloZ = 0
 
     const block = { n: ++this.line, effects, path, step: 0 }
     this.queue.push(block)

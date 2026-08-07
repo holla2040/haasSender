@@ -451,3 +451,8 @@ test('HAAS G51 P translates to the MACH3 factor form; centre forms pass through'
   assert.deepEqual(wireLine('G51 P2', {}), ['G51 X2 Y2 Z2'])
   assert.deepEqual(wireLine('G51 X0 Y0 P2', {}), ['G51 X0 Y0 P2'])  // board's error:36 answers it
 })
+
+test('a P-less HAAS G86 gains P0 on the wire — grblHAL requires the dwell word', () => {
+  assert.deepEqual(wireLine('G86 Z-2. R1. F500.', {}), ['G86 P0 Z-2. R1. F500.'])
+  assert.deepEqual(wireLine('G86 P0.1 Z-2. R1. F500.', {}), ['G86 P0.1 Z-2. R1. F500.'])
+})

@@ -1194,7 +1194,10 @@ function cycleStart () {
 
   s.alarm = null
   s.mode = 'OPERATION'; s.fn = 'MEM'
-  s.activePane = 'program'
+  // The main display shows POSITION during a run — pane 2 already carries the
+  // listing with the running-block highlight, and rendering the same listing
+  // twice was the report's D2. The DRO is what an operator actually watches.
+  s.activePane = 'position'
   s.cycleStartedAt = Date.now(); s.cycleMs = 0
   s.job = { sentAll: false, rows }
   streamer.singleBlock = s.singleBlock
