@@ -4,7 +4,10 @@ dist/
 # Haas Automation's operator manuals are copyright Haas Automation, Inc.
 # They are the reference this project is built against, but redistributing them
 # here would be infringement — fetch your own copy (see README) and drop it in.
+# Text extractions are the same copyrighted content in another format, so they
+# stay out too: `pdftotext -layout` regenerates one whenever it is wanted.
 reference/*.pdf
+reference/*.txt
 reference/art/
 history/tool-results/*.pdf
 history/tool-results/pdf-*/
