@@ -151,6 +151,53 @@ parser would teach nothing.
 
 ---
 
+## MDI pass, 2026-08-07 — W3/W4/W6 closed (tests 79/79 green)
+
+MDI was a command line: ENTER sent the typed text to the machine and kept a
+12-entry scrolling history. §4.2.3 p.114 describes something else entirely —
+a **program page**. "Your input stays on the MDI input page until you delete
+it", and [CYCLE START] is what executes it. T2.4 gives [ENTER] one job,
+"answers prompts and writes input"; it is not a run key anywhere on the panel.
+
+- The page is now a program in the same shape as the selected one, so the
+  editor and CYCLE START each point at one of two things instead of the MDI
+  page having its own half-built copy of both. §4.2.1 step 1 is explicit that
+  EDIT:EDIT and EDIT:MDI are the same editor.
+- **WRITE/ENTER writes the block onto the page**; nothing goes to the machine.
+- **CYCLE START runs the page** — same `wireProgram`, same run switches, same
+  streamer, same running-block mark. The mode bar stays `EDIT: MDI` through the
+  cycle and the blocks stay in front of the operator who typed them.
+- **ERASE PROGRAM clears the page** (was already fixed; the row was stale).
+- **HOME → `Onnnnn` → ALTER files the page in control memory and clears it**
+  (§4.2.3 step 3). It refuses to overwrite an existing O-number, and it does
+  not jump to LIST — the manual tells the operator to press [LIST PROGRAM] to
+  find it, which means the control stayed where it was.
+- The editor keys reach the page: cursor by word, INSERT / ALTER / DELETE /
+  UNDO, HOME and END. Edits are refused while the page is the running program.
+- An MDI cycle no longer counts as a part — that pane is labelled M30 CNT.
+- Errors still pin to the block that caused them, now via the streamer's
+  `rows` map, so the HAAS note comes with them.
+- Fixed alongside: a cycle stopped by a rejected block left the THIS timer
+  counting forever (nothing cleared `cycleStartedAt` once the job was gone).
+
+**Two deliberate divergences, both said on the HELP page.** A `$` command is
+not a program block: it is grbl's own control language, it has no HAAS
+equivalent, and `$X` has to reach a machine sitting in alarm — which is exactly
+when CYCLE START refuses. So `$…` + WRITE/ENTER goes straight out. And the `;`
+key is comment-to-end-of-line here, not the HAAS end-of-block, so one line is
+one block.
+
+**Not done:** the second press of [MDI/DNC] selecting DNC (T2.7, Setting 55).
+The card page already *is* DNC on this control — RECEIVE opens it and CYCLE
+START there hands the file to the board — so the key's second function would be
+a shortcut to a page that already exists. Add it if the shortcut is wanted.
+
+Verified in the browser on the sim seat: two blocks typed and held on the page
+with nothing sent, CYCLE START moving X to 10.000 with M30 CNT still 0, `G12`
+coming back pinned to its block with the pocket-milling note, HOME+`O10`+ALTER
+filing `O00010` and clearing the page, and `$G` reporting that it went straight
+to the machine.
+
 ## 1. Operator workflows (§3.1, §3.3, §3.12–3.15, §4.2.1, §4.2.3, §4.7)
 
 ### Top findings — mis-teach or surprise a student
@@ -159,10 +206,10 @@ parser would teach nothing.
 |---|---|---|---|---|---|
 | W1 | §3.12 p.104 | Value + ENTER **adds to** the cell; **F1 replaces** | ENTER replaces (`commitInput` → `setWorkOffset`, `main.js:806`, `grbl.js:126`); same on tool page | BUG | open |
 | W2 | §3.12 p.104 | F1 is the replace key | F1 unimplemented (`keys.js:211` absent) | MISSING | open |
-| W3 | §4.2.3 p.114 | In MDI, CYCLE START executes the MDI blocks | CYCLE START from MDI pane starts the selected **MEM program** (`main.js:995-1023`); MDI runs on ENTER instead | BUG | open |
-| W4 | §4.2.3 p.114 | ERASE PROGRAM clears the MDI page | From MDI it deletes the highlighted control-memory program, no prompt (`main.js:759-773`) | BUG | open |
+| W3 | §4.2.3 p.114 | In MDI, CYCLE START executes the MDI blocks | Fixed: the MDI page is a program buffer and CYCLE START runs it through the same wire, switches and streamer (`cycleStart`) | BUG | **fixed** |
+| W4 | §4.2.3 p.114 | ERASE PROGRAM clears the MDI page | Fixed: from MDI the key clears the page and never reaches the directory (`eraseProgram`) | BUG | **fixed** |
 | W5 | §4.1 p.111, §3.3.2 p.77 | Type `Onnnnn` + SELECT PROGRAM selects **or creates** it | Typed O-number ignored; ENTER on LIST pane falls through and is **sent to the machine as g-code** (`main.js:751-757`, `:823-830`); no create-from-pendant | BUG + MISSING | open |
-| W6 | §4.2.1 p.112 | ENTER is not a machine command in EDIT; MDI window is editable | In EDIT, typed word + ENTER runs on the machine (`main.js:830`); INSERT/ALTER/DELETE dead in MDI window (`editing()` requires `activePane==='program'`, `main.js:446-448`) | BUG + MISSING | open |
+| W6 | §4.2.1 p.112 | ENTER is not a machine command in EDIT; MDI window is editable | Fixed: ENTER never reaches the machine as g-code, and the cursor keys + INSERT/ALTER/DELETE/UNDO work on the MDI window (`editing()` covers both windows) | BUG + MISSING | **fixed** |
 | W7 | §3.12.2 F3.11 p.105 | PART ZERO SET advances to the next axis column after each press | Writes the highlighted cell and stays (`partZeroSet main.js:423-427`); taught procedure sets X twice, never Y | BUG | open |
 
 ### Remaining workflow findings

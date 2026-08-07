@@ -428,6 +428,21 @@ export function parseONumber (text) {
 }
 
 /**
+ * The same number as a student types it on the keypad, on its own: `O10`,
+ * normalised to `O00010`. Two keys take one — SELECT PROGRAM on the LIST page
+ * (§3.3.2) and ALTER at the head of the MDI page (§4.2.3 step 3) — and both must
+ * agree about what counts as a program number, or the two would file differently.
+ *
+ * Stricter than parseONumber on purpose: this is a whole typed entry, not the
+ * first word of a program, so anything after the digits means the operator typed
+ * something else and it must not be taken for a program number.
+ */
+export function parseOWord (typed) {
+  const m = /^O\s*(\d{1,5})$/i.exec(String(typed ?? '').trim())
+  return m ? 'O' + m[1].padStart(5, '0') : null
+}
+
+/**
  * Split a program into the blocks the control *displays*.
  *
  * This is deliberately not the same list as the one that goes on the wire. The

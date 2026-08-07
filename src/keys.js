@@ -195,11 +195,10 @@ export const LEGEND = Object.fromEntries(
  * The bar for being on this list is deliberately high: the key's action must be
  * wired AND exercised by a passing test or observed working end to end. Several
  * keys are wired but not listed, because "wired" is not the same as "works" —
- * the OFFSET display key switches panes but the pane is a placeholder; EDIT and
- * MDI change the mode bar and nothing else; the rapid and spindle override keys
- * send the right byte but nothing has confirmed the machine acts on it. The
- * cursor ◀ ▶ keys are the same case: they change inch/metric on the SETTING page
- * and do nothing anywhere else, which is not what a green key promises.
+ * F2-F4 are legends only, and the rapid and spindle override keys send the right
+ * byte but nothing has confirmed the machine acts on it. The cursor ◀ ▶ keys are
+ * the same case: they change inch/metric on the SETTING page and do nothing
+ * anywhere else, which is not what a green key promises.
  *
  * Add to this list as each phase lands, not when the handler is first written.
  *
@@ -277,8 +276,9 @@ export const VERIFIED = new Set([
   // altering, inserting and deleting a word, unwinding all three with UNDO, and
   // writing the result back into control memory.
   'mode-edit', 'insert', 'alter', 'delete', 'undo',
-  // MDI — a typed block ran on the board, and a bad one came back pinned to the
-  // line that caused it
+  // MDI — §4.2.3: the page holds the typed blocks, the editor keys work on it,
+  // CYCLE START runs it, and a bad block comes back pinned to the line that
+  // caused it
   'mode-mdi',
   // The cursor group. Every pane with something to point at now responds: the
   // EDIT word cursor, the offset grid, the tool table, control memory, and

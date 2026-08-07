@@ -68,18 +68,24 @@ function positionBody (s) {
 }
 
 /**
- * The program with the EDIT cursor on it — a *word* picked out, not a character,
+ * A block with the edit cursor on it — a *word* picked out, not a character,
  * because that is the unit a HAAS cursor moves in and the unit INSERT, ALTER and
- * DELETE all act on.
+ * DELETE all act on. Shared by the two windows §4.2.1 says are editable: the
+ * EDIT:EDIT program and the EDIT:MDI page.
  */
+const cursorWords = (text, at) => {
+  const w = words(text)
+  return w.map((word, j) => html`<span
+    class=${j === at ? 'cur' : ''}>${word}</span>${j < w.length - 1 ? ' ' : ''}`)
+}
+
+/** The program with the EDIT cursor on it. */
 function editBody (s) {
   const from = Math.max(0, Math.min(s.editRow - 4, s.program.lines.length - 10))
   return html`<pre>${s.program.lines.slice(from, from + 10).map((l, i) => {
     const row = from + i
     if (row !== s.editRow) return html`<div class=${l.del && s.blockDelete ? 'skipped' : ''}>${l.text}</div>`
-    const w = words(l.text)
-    return html`<div>${w.map((word, j) => html`<span
-      class=${j === s.editWord ? 'cur' : ''}>${word}</span>${j < w.length - 1 ? ' ' : ''}`)}</div>`
+    return html`<div>${cursorWords(l.text, s.editWord)}</div>`
   })}</pre>`
 }
 
@@ -172,16 +178,31 @@ ${WCS.map((w, row) => {
 }
 
 /**
- * MDI — type a block, WRITE/ENTER runs it.
+ * MDI — §4.2.3 p.114. A program page, not a command line: "your input stays on
+ * the MDI input page until you delete it", and CYCLE START is what runs it.
  *
- * The history is worth showing rather than throwing away: half of learning MDI is
- * seeing what you just told the machine, and an error against the block that
- * caused it teaches more than an error on its own.
+ * So it draws like the EDIT window, with the same word cursor and the same
+ * running-block mark — and with the error printed against the block that caused
+ * it, which is half of what makes MDI the place to learn g-code.
  */
 function mdiBody (s) {
-  return html`<pre>${s.mdi.length
-    ? s.mdi.map(h => html`<div class=${h.error ? 'k' : ''}>${h.text}${h.error ? '   ' + h.error : ''}</div>`)
-    : html`<span class="dim">Type a block and press WRITE/ENTER.</span>`}
+  const lines = s.mdi.lines
+  if (!lines.length) {
+    return html`<pre class="dim">the MDI page is empty
+
+Type a block and press WRITE/ENTER to put it
+on the page. CYCLE START runs the whole page,
+ERASE PROGRAM clears it.
+<span class="k">&gt; ${s.input}_</span></pre>`
+  }
+  const from = Math.max(0, Math.min(s.editRow - 4, lines.length - 8))
+  return html`<pre>${lines.slice(from, from + 8).map((l, i) => {
+    const row = from + i
+    return html`<div class=${(l.error ? 'k' : '') + (l.del && s.blockDelete ? ' skipped' : '')}
+      >${row === s.mdi.current - 1 ? '▶' : ' '} ${
+      row === s.editRow ? cursorWords(l.text, s.editWord) : l.text}${
+      l.error ? '   ' + l.error : ''}</div>`
+  })}
 <span class="k">&gt; ${s.input}_</span></pre>`
 }
 
@@ -352,6 +373,16 @@ const HELP = [
   ['', 'no spindle orient, and no 5% rapid in grbl. Another'],
   ['', `${TODO_KEYS} are simply not built yet. Press either and it says`],
   ['', 'which of the two it is.'],
+  ['', ''],
+  ['MDI', 'A program page, not a command line. WRITE/ENTER puts'],
+  ['', 'the typed block ON the page; CYCLE START runs the whole'],
+  ['', 'page; ERASE PROGRAM clears it. The cursor keys and'],
+  ['', 'INSERT / ALTER / DELETE work on it as they do in EDIT.'],
+  ['', 'HOME, type Onnnnn, ALTER files the page in memory.'],
+  ['', 'Two divergences: a $ command is not a program block and'],
+  ['', 'goes to the machine the moment you press WRITE/ENTER,'],
+  ['', 'and the ; key is a comment here, not the HAAS end-of-'],
+  ['', 'block — one line is one block.'],
   ['', ''],
   ['Tool offsets', 'With the haasSender firmware the machine holds a real'],
   ['', '32-tool table and G43 H&#8202;n goes straight through. On a'],

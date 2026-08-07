@@ -17,8 +17,9 @@ Mill Operator's Manual in `reference/`; the pendant photos are in `images/`.
 
 Status: **complete.** A student imports a program, picks
 it from control memory with LIST PROGRAM, sets work offsets and tool lengths on
-the OFFSET pages, edits blocks word by word in EDIT, types blocks in MDI, and runs
-the job with the run switches, overrides and cycle timers live. All thirteen
+the OFFSET pages, edits blocks word by word in EDIT, builds and runs a page of
+blocks in MDI, and runs the job with the run switches, overrides and cycle
+timers live. All thirteen
 display pages are real. 116 of the 132 keys work; 10 are faded because this
 control can never honour them; 6 are muted because they are not built yet — and
 pressing any of those 16 says which it is.

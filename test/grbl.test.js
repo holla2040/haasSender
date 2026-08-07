@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as grblNS from '../src/grbl.js'
-import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -118,6 +118,25 @@ test('parseONumber finds the program name, and admits when there is none', () =>
   // A CAM post that never expected control memory. Do not invent a number.
   assert.equal(parseONumber('G21 G90\nG0 X0'), null)
   assert.equal(parseONumber('(O1234 IS IN A COMMENT)\nG0'), null)
+})
+
+// Two keys file a program by a number the operator typed: SELECT PROGRAM on the
+// LIST page (§3.3.2) and ALTER at the head of the MDI page (§4.2.3 step 3). They
+// share this so they cannot disagree about what a program number is. The strict
+// end anchor is the point: `O10 G0 X5` is a block a student meant to RUN, and
+// taking it for a program number would file the MDI page instead of running it.
+test('parseOWord takes a typed program number and nothing else', () => {
+  assert.equal(parseOWord('O10'), 'O00010')
+  assert.equal(parseOWord('o 7 '), 'O00007')
+  assert.equal(parseOWord('O00010'), 'O00010')
+  assert.equal(parseOWord('O99999'), 'O99999')
+
+  assert.equal(parseOWord('O10 G0 X5'), null)      // a block, not a number
+  assert.equal(parseOWord('G0 X10'), null)
+  assert.equal(parseOWord('O123456'), null)        // six digits is not a HAAS number
+  assert.equal(parseOWord('O'), null)
+  assert.equal(parseOWord(''), null)
+  assert.equal(parseOWord(undefined), null)
 })
 
 // --------------------------------------------------------------- the real check

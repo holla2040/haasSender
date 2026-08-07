@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, wireLine, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, haasNote, describeRecovery } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, helpTotal } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
@@ -38,6 +38,13 @@ const REALTIME = {
   'rapid-100': 0x95, 'rapid-50': 0x96, 'rapid-25': 0x97,
   'coolant': 0xA0
 }
+
+/**
+ * A fresh MDI page. §4.2.3: "Your input stays on the MDI input page until you
+ * delete it" — so the page is emptied in exactly two places, power-up and ERASE
+ * PROGRAM, and nowhere else.
+ */
+const blankMdi = () => ({ o: '', name: 'MDI', lines: [], current: 0 })
 
 const s = {
   // Is the control switched on at all? Distinct from whether the machine is
@@ -88,9 +95,11 @@ const s = {
   // EDIT: which block, and which *word* in it. The HAAS cursor selects a word —
   // address plus value — and INSERT, ALTER and DELETE all act on that one word.
   editRow: 0, editWord: 0, undoStack: [],
-  // MDI keeps what it ran, so an error can be shown against the block that caused
-  // it rather than on its own.
-  mdi: [], alarms: [], shifted: false,
+  // MDI — §4.2.3 p.114. A program page, not a command line: what is typed stays
+  // on it until it is deleted, CYCLE START runs it, and the same editor keys that
+  // work on a program work on it. Same shape as `program` for exactly that reason
+  // — one editor, one CYCLE START, two things they can point at.
+  mdi: blankMdi(), alarms: [], shifted: false,
   // The machine's own settings, as `$$` reports them. Read-only here: writing a
   // setting is a different kind of act from writing a work offset.
   settings: {}, paramRow: 0,
@@ -147,8 +156,20 @@ function press (id) {
     return invalidate()
   }
 
-  // Mode keys — three modes only, per T2.11.
-  if (MODES[id]) { Object.assign(s, MODES[id]); return invalidate() }
+  // Mode keys — three modes only, per T2.11. The edit cursor and its undo history
+  // belong to the program under them, so moving between EDIT and MDI leaves both
+  // behind: an UNDO carried across would put one program's blocks on the other's
+  // page, and the cursor would land wherever the last program happened to be long.
+  if (MODES[id]) {
+    // Only when the key moves to a DIFFERENT editable window. The mode keys with
+    // no pane of their own — HANDLE JOG, MEMORY, ZERO RETURN — leave the editor
+    // where it stands, so a glance at the DRO mid-edit does not cost the undo
+    // history it took a dozen presses to build.
+    const pane = MODES[id].activePane
+    if (pane && pane !== s.activePane) { s.editRow = 0; s.editWord = 0; s.undoStack = [] }
+    Object.assign(s, MODES[id])
+    return invalidate()
+  }
 
   // OFFSET carries two pages, as it does on the machine, and the key cycles them.
   if (id === 'page-offset' && s.activePane === 'offset') {
@@ -198,7 +219,9 @@ function press (id) {
     if (id === 'part-zero-set') return partZeroSet()
   }
 
-  // EDIT: the cursor walks the program by word, and four keys change it.
+  // EDIT and MDI: the cursor walks the program by word, and four keys change it.
+  // §4.2.1 step 1 gives both windows the same editor, and HOME here is the first
+  // half of the §4.2.3 save — the cursor has to reach the top of the MDI page.
   if (editing()) {
     const move = {
       left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1],
@@ -206,7 +229,7 @@ function press (id) {
     }[id]
     if (move) return moveCursor(...move)
     if (id === 'home') { s.editRow = 0; s.editWord = 0; return invalidate() }
-    if (id === 'end') { s.editRow = s.program.lines.length - 1; s.editWord = 0; return invalidate() }
+    if (id === 'end') { s.editRow = Math.max(0, target().lines.length - 1); s.editWord = 0; return invalidate() }
     if (['insert', 'alter', 'delete', 'undo'].includes(id)) return editKey(id)
   }
 
@@ -507,16 +530,42 @@ function logAlarm (kind, code, text, recovery) {
 
 // ------------------------------------------------------------------ EDIT mode
 
+/**
+ * The program the editor and CYCLE START act on.
+ *
+ * §4.2.3 makes the MDI page a program in its own right — edited with the same
+ * keys (§4.2.1 step 1: "an active EDIT:EDIT or EDIT:MDI window"), run by the same
+ * CYCLE START — so it is the same object shape and there is one of everything
+ * rather than a second half-editor for the MDI page.
+ */
+const target = () => (s.activePane === 'mdi' ? s.mdi : s.program)
+
+/** Put a changed program back where it came from: the MDI page, or memory. */
+const setTarget = (prog) => { if (s.activePane === 'mdi') s.mdi = prog; else s.program = prog }
+
+/**
+ * Is the program under the editor the one the machine is running?
+ *
+ * Its blocks are already on the wire, so an edit could not affect the cycle
+ * anyway — and every edit replaces the program object, which would leave the
+ * running-block mark updating a copy nobody is looking at. A HAAS locks the
+ * editor during a cycle for the first reason; this control has the second too.
+ */
+const runningTarget = () => s.job?.prog === target()
+
 // EDIT mode *and* the program on screen. An operator who has paged away to
-// POSITION should not be editing a program they cannot see.
+// POSITION should not be editing a program they cannot see. The MDI page is
+// always editable, empty included — an empty one has to accept a first block
+// somehow, and that is the whole of §4.2.3 step 2.
 const editing = () =>
-  s.mode === 'EDIT' && s.fn === 'EDIT' &&
-  s.activePane === 'program' && s.program.lines.length > 0
-const editLine = () => s.program.lines[s.editRow]
+  s.activePane === 'mdi' ||
+  (s.mode === 'EDIT' && s.fn === 'EDIT' &&
+   s.activePane === 'program' && s.program.lines.length > 0)
+const editLine = () => target().lines[s.editRow]
 
 /** Clamp the cursor after the program under it has changed shape. */
 function clampCursor () {
-  s.editRow = Math.max(0, Math.min(s.program.lines.length - 1, s.editRow))
+  s.editRow = Math.max(0, Math.min(target().lines.length - 1, s.editRow))
   const n = words(editLine()?.text).length
   s.editWord = Math.max(0, Math.min(Math.max(0, n - 1), s.editWord))
 }
@@ -528,7 +577,7 @@ function clampCursor () {
  */
 function moveCursor (dWord, dRow) {
   if (dRow) {
-    s.editRow = Math.max(0, Math.min(s.program.lines.length - 1, s.editRow + dRow))
+    s.editRow = Math.max(0, Math.min(target().lines.length - 1, s.editRow + dRow))
     s.editWord = 0
     return invalidate()
   }
@@ -539,7 +588,7 @@ function moveCursor (dWord, dRow) {
     s.editRow--
     s.editWord = Math.max(0, words(editLine()?.text).length - 1)
   } else if (next >= n) {
-    if (s.editRow >= s.program.lines.length - 1) return invalidate()
+    if (s.editRow >= target().lines.length - 1) return invalidate()
     s.editRow++
     s.editWord = 0
   } else {
@@ -554,51 +603,86 @@ function moveCursor (dWord, dRow) {
  * put it back is a toy.
  */
 function applyEdit (lines, message) {
+  const prog = target()
   s.undoStack.push({
-    lines: s.program.lines.map(l => ({ ...l })),
+    lines: prog.lines.map(l => ({ ...l })),
     editRow: s.editRow,
     editWord: s.editWord
   })
   if (s.undoStack.length > 50) s.undoStack.shift()
 
-  s.program = { ...s.program, lines }
+  const next = { ...prog, lines }
+  setTarget(next)
   clampCursor()
-  saveEditedProgram()
+  saveEditedProgram(next)
   s.message = message
   invalidate()
 }
 
-/** Put the edited program back into control memory, under the same O-number. */
-function saveEditedProgram () {
-  const at = s.programs.findIndex(p => p.o === s.program.o)
-  if (at < 0) return             // not from the directory — an MDI scratch block
-  s.programs[at] = { ...s.programs[at], text: s.program.lines.map(l => l.text).join('\n') }
+/**
+ * Put the edited program back into control memory, under the same O-number.
+ *
+ * The MDI page has no O-number until ALTER files it, so it falls out here — which
+ * is precisely §4.2.3: what is typed on that page stays on that page and nowhere
+ * else until the operator says otherwise.
+ */
+function saveEditedProgram (prog) {
+  if (!prog.o) return
+  const at = s.programs.findIndex(p => p.o === prog.o)
+  if (at < 0) return             // not from the directory
+  s.programs[at] = { ...s.programs[at], text: prog.lines.map(l => l.text).join('\n') }
   if (!saveDirectory()) s.message = 'edit not stored — browser storage refused'
 }
 
+/**
+ * Put a typed block on the page, after the cursor — §4.2.3 step 2, "type program
+ * commands in the window". This is what WRITE/ENTER does on the MDI page, and
+ * what INSERT does when there is no block to insert a word into yet.
+ *
+ * `n` is renumbered across the whole page so a message that names a line (the
+ * two-M-codes warning at CYCLE START) names one the operator can count to.
+ */
+function appendBlock (text) {
+  const lines = target().lines
+  const at = lines.length ? s.editRow + 1 : 0
+  const next = [...lines.slice(0, at), { text, del: text[0] === '/' }, ...lines.slice(at)]
+    .map((l, i) => ({ ...l, n: i + 1 }))
+  applyEdit(next, '')
+  s.editRow = at
+  s.editWord = 0
+}
+
 function editKey (id) {
+  if (runningTarget()) { s.message = 'not while it is running'; return invalidate() }
   const line = editLine()
   const typed = s.input.trim()
 
   if (id === 'undo') {
     const back = s.undoStack.pop()
     if (!back) { s.message = 'nothing to undo'; return invalidate() }
-    s.program = { ...s.program, lines: back.lines }
+    const next = { ...target(), lines: back.lines }
+    setTarget(next)
     s.editRow = back.editRow
     s.editWord = back.editWord
-    saveEditedProgram()
+    saveEditedProgram(next)
     s.message = `undo — ${s.undoStack.length} left`
     return invalidate()
   }
 
   if (id === 'delete') {
+    if (!line) { s.message = 'nothing on the page to delete'; return invalidate() }
     // Nothing typed and the block has one word left: the block itself goes.
     const w = words(line.text)
     const lines = w.length <= 1
-      ? s.program.lines.filter((_, i) => i !== s.editRow)
-      : s.program.lines.map((l, i) =>
+      ? target().lines.filter((_, i) => i !== s.editRow)
+      : target().lines.map((l, i) =>
           i === s.editRow ? { ...l, text: editBlock(l.text, s.editWord, 'delete') } : l)
-    if (!lines.length) { s.message = 'a program needs at least one block'; return invalidate() }
+    // A numbered program has to stay a program. The MDI page is scratch, so
+    // emptying it block by block is allowed — ERASE PROGRAM is just the fast way.
+    if (!lines.length && s.activePane !== 'mdi') {
+      s.message = 'a program needs at least one block'
+      return invalidate()
+    }
     s.input = ''
     return applyEdit(lines, w.length <= 1 ? 'block deleted' : `deleted ${w[s.editWord]}`)
   }
@@ -609,18 +693,59 @@ function editKey (id) {
   }
 
   s.input = ''
+
+  // §4.2.3 step 3: HOME to the top of the MDI page, type a program number, ALTER
+  // — and the page is filed in control memory under it. Only on the MDI page and
+  // only at the very head of it: altering the first word of a *program* to an
+  // O-number is ordinary word editing and must go on working.
+  if (id === 'alter' && s.activePane === 'mdi' && s.editRow === 0 && s.editWord === 0) {
+    const o = parseOWord(typed)
+    if (o) return saveMdiAs(o)
+  }
+
+  if (!line) {
+    // An empty MDI page has no word to alter, but it can certainly take a block.
+    if (id === 'insert') return appendBlock(typed)
+    s.message = 'nothing on the page to alter — press WRITE/ENTER to add a block'
+    return invalidate()
+  }
+
   if (id === 'alter') {
-    const lines = s.program.lines.map((l, i) =>
+    const lines = target().lines.map((l, i) =>
       i === s.editRow ? { ...l, text: editBlock(l.text, s.editWord, 'alter', typed) } : l)
     return applyEdit(lines, `altered to ${typed}`)
   }
 
   // INSERT after the cursor. On a block that is only a comment, or at the end of
   // the program, this is how a new block gets written.
-  const lines = s.program.lines.map((l, i) =>
+  const lines = target().lines.map((l, i) =>
     i === s.editRow ? { ...l, text: editBlock(l.text, s.editWord, 'insert', typed) } : l)
   s.editWord++
   return applyEdit(lines, `inserted ${typed}`)
+}
+
+/**
+ * §4.2.3 step 3: the MDI page becomes a numbered program in control memory, and
+ * the page is cleared.
+ *
+ * Deliberately does not go to the LIST page afterwards — the manual tells the
+ * operator to press [LIST PROGRAM] to find it, which means the control stayed
+ * where it was. The program selected to run is left alone for the same reason.
+ */
+function saveMdiAs (o) {
+  if (!s.mdi.lines.length) { s.message = 'nothing on the MDI page to save'; return invalidate() }
+  // Filing over an existing program would take somebody's work with no warning
+  // and no undo. The number is the operator's to choose: say that one is taken.
+  if (s.programs.some(p => p.o === o)) {
+    s.message = `${o} already exists — erase it first, or choose another number`
+    return invalidate()
+  }
+  const persisted = fileProgram(o, '(from MDI)', [o, ...s.mdi.lines.map(l => l.text)].join('\n'))
+  s.mdi = blankMdi()
+  s.editRow = 0; s.editWord = 0; s.undoStack = []
+  s.message = (persisted ? '' : 'NOT STORED (browser storage refused) — ') +
+    `${o} saved — press LIST PROGRAM to find it`
+  invalidate()
 }
 
 // ------------------------------------------------------------------ tool table
@@ -829,19 +954,27 @@ function nextFreeONumber () {
 /** Returns false when the directory could not be persisted; the caller must say so. */
 const saveDirectory = () => store.set(PROGRAMS, s.programs)
 
-/** Import a file into control memory, filed under its O-number. */
-function storeProgram (name, text) {
-  const found = parseONumber(text)
-  const o = found ?? nextFreeONumber()
-  if (!o) { s.message = 'control memory is full'; return invalidate() }
-
+/**
+ * File a program into control memory under `o` and leave the LIST cursor on it.
+ * Returns false when browser storage refused, which the caller has to say.
+ */
+function fileProgram (o, name, text) {
   const at = s.programs.findIndex(p => p.o === o)
   const entry = { o, name, text }
   if (at >= 0) s.programs[at] = entry
   else s.programs.push(entry)
   s.programs.sort((a, b) => a.o.localeCompare(b.o))
   s.listIndex = s.programs.findIndex(p => p.o === o)
-  const persisted = saveDirectory()
+  return saveDirectory()
+}
+
+/** Import a file into control memory, filed under its O-number. */
+function storeProgram (name, text) {
+  const found = parseONumber(text)
+  const o = found ?? nextFreeONumber()
+  if (!o) { s.message = 'control memory is full'; return invalidate() }
+
+  const persisted = fileProgram(o, name, text)
 
   s.mode = 'EDIT'; s.fn = 'LIST'; s.activePane = 'list'
   selectProgram()
@@ -872,7 +1005,11 @@ function eraseProgram () {
   // the directory from there. Deleting the wrong object is the worst kind of
   // key: it looked like it worked.
   if (s.activePane === 'mdi') {
-    s.mdi = []
+    // Not mid-cycle: the page is what the machine is running, and taking it away
+    // would leave the running-block highlight pointing at blocks that are gone.
+    if (s.job) { s.message = 'cannot clear the MDI page while it is running'; return invalidate() }
+    s.mdi = blankMdi()
+    s.editRow = 0; s.editWord = 0; s.undoStack = []
     s.input = ''
     s.message = 'MDI cleared'
     return invalidate()
@@ -901,7 +1038,8 @@ function eraseProgram () {
  * point of the active-pane model, and the reason exactly one pane is white.
  *
  * On a data-entry pane it commits the typed value into the highlighted cell. On
- * any other, it is MDI: the typed text goes to the machine as a block.
+ * the MDI page it writes the typed block onto the page — T2.4 gives this key one
+ * job, "answers prompts and writes input", and CYCLE START is what runs things.
  */
 function commitInput () {
   const v = s.input.trim()
@@ -946,30 +1084,36 @@ function commitInput () {
   if (s.activePane === 'list') {
     s.input = ''
     if (!v) return invalidate()
-    const m = /^O\s*(\d{1,5})$/i.exec(v)
-    if (!m) { s.message = `type a program number, like O00010 — "${v}" is not one`; return invalidate() }
-    return selectOrCreateProgram('O' + m[1].padStart(5, '0'))
+    const o = parseOWord(v)
+    if (!o) { s.message = `type a program number, like O00010 — "${v}" is not one`; return invalidate() }
+    return selectOrCreateProgram(o)
   }
 
-  // ENTER is a machine command in exactly one place: MDI. On every other pane a
-  // HAAS commits typed text with the pane's own key (INSERT, ALTER, F1…), and a
-  // block that fell through to the machine from the EDIT page ran code the
-  // student thought they were merely typing. The buffer survives the refusal —
-  // switching to MDI and pressing ENTER again does what they meant.
+  // Typed text becomes a block in exactly one place: the MDI page. On every other
+  // pane a HAAS commits it with the pane's own key (INSERT, ALTER, F1…), and text
+  // that fell through from the EDIT page ran code the student thought they were
+  // merely typing. The buffer survives the refusal — switching to MDI and pressing
+  // ENTER again does what they meant.
   if (s.activePane !== 'mdi') {
-    if (v) s.message = 'WRITE/ENTER sends nothing from this pane — press MDI/DNC to run a block'
+    if (v) s.message = 'WRITE/ENTER writes nothing from this pane — press MDI/DNC to write a block'
     return invalidate()
   }
 
   s.input = ''
   if (!v) return invalidate()
+  if (runningTarget()) { s.message = 'not while the page is running'; return invalidate() }
 
-  s.mdi = [...s.mdi, { text: v }].slice(-12)
-  s.message = ''
-  // Through the same dialect translation a program gets — a typed `G43 H1` or
-  // `G04 P500` must not reach the machine rawer than a streamed one would.
-  for (const line of wireLine(stripComments(v), { tools: s.tools, caps: s.caps })) send(line)
-  invalidate()
+  // A `$` command is the one thing typed here that is not a program block: it is
+  // grbl's own control language, it has no HAAS equivalent, and it has no business
+  // on a page CYCLE START runs. It also has to reach a machine sitting in alarm,
+  // which is exactly when CYCLE START refuses — so `$X` goes straight out.
+  if (v[0] === '$') {
+    send(v)
+    if (link) s.message = `${v} sent — a $ command goes to the machine now, it is not a program block`
+    return invalidate()
+  }
+
+  appendBlock(v)
 }
 
 /**
@@ -1171,8 +1315,17 @@ function cycleStart () {
   // the only way to run the files too big to fit in control memory.
   if (s.activePane === 'list' && s.listPage === 'sd') return runFromCard()
 
-  if (!s.program.lines.length) {
-    s.message = 'no program selected — press LIST PROGRAM, then SELECT PROGRAM'
+  // §4.2.3 p.114 step 2: on the MDI page, CYCLE START executes the blocks on the
+  // page. The page is a program like any other, so it goes down the same wire,
+  // through the same run switches and the same streamer — nothing about running
+  // it is special, which is the point of holding it in the same shape.
+  const isMdi = s.activePane === 'mdi'
+  const run = isMdi ? s.mdi : s.program
+
+  if (!run.lines.length) {
+    s.message = isMdi
+      ? 'the MDI page is empty — type a block and press WRITE/ENTER'
+      : 'no program selected — press LIST PROGRAM, then SELECT PROGRAM'
     return invalidate()
   }
 
@@ -1183,7 +1336,7 @@ function cycleStart () {
   // (M99 loop, missing sub, macro arguments) refuses with the reason.
   let wire, rows
   try {
-    ({ wire, rows } = wireProgram(s.program.lines, {
+    ({ wire, rows } = wireProgram(run.lines, {
       ...s, getProgram: programByNumber, dryRunFeed: DRY_RUN_FEED[s.units][s.incIndex]
     }))
   } catch (e) {
@@ -1199,25 +1352,30 @@ function cycleStart () {
   // A program that asks for a tool offset nobody measured gets zero, which is the
   // one number certain to be wrong. Run anyway — refusing would be worse on a
   // machine with no tools fitted — but never let it happen quietly.
-  const unmeasured = toolsUsed(s.program.lines).filter(n => n > 0 && s.tools[n] === undefined)
+  const unmeasured = toolsUsed(run.lines).filter(n => n > 0 && s.tools[n] === undefined)
   if (unmeasured.length) {
     s.message = `no tool length measured for ${unmeasured.map(n => 'H' + n).join(', ')} — running with no offset`
   } else {
     // Manual p.322: "Only one M-code is allowed per line of code." grbl runs
     // such a block happily, which teaches a habit a real HAAS rejects — warn,
     // run anyway. The unmeasured-tool warning outranks this one.
-    const multiM = s.program.lines.find(l => (stripComments(l.text).match(/\bM\d/gi) || []).length > 1)
+    const multiM = run.lines.find(l => (stripComments(l.text).match(/\bM\d/gi) || []).length > 1)
     if (multiM) s.message = `line ${multiM.n}: two M-codes in one block — a real HAAS allows one per line (runs here anyway)`
   }
 
+  // A block that failed last time is still on the MDI page with its error printed
+  // against it. Running again is the operator's answer to that, so the mark goes.
+  for (const l of run.lines) delete l.error
+
   s.alarm = null
-  s.mode = 'OPERATION'; s.fn = 'MEM'
-  // The main display shows POSITION during a run — pane 2 already carries the
-  // listing with the running-block highlight, and rendering the same listing
-  // twice was the report's D2. The DRO is what an operator actually watches.
-  s.activePane = 'position'
+  // MDI runs from the MDI page and stays on it — the mode bar reads EDIT: MDI
+  // right through the cycle, as it does on the machine, and the blocks stay in
+  // front of the operator who typed them. A program run goes to OPERATION: MEM
+  // with the DRO up: pane 2 already carries the listing with the running-block
+  // highlight, and the DRO is what an operator actually watches.
+  if (!isMdi) { s.mode = 'OPERATION'; s.fn = 'MEM'; s.activePane = 'position' }
   s.cycleStartedAt = Date.now(); s.cycleMs = 0
-  s.job = { sentAll: false, rows }
+  s.job = { sentAll: false, rows, prog: run, mdi: isMdi }
   streamer.singleBlock = s.singleBlock
   streamer.start(wire)
   if (s.singleBlock) streamer.release()
@@ -1233,7 +1391,25 @@ function onLine (line) {
   if (streamer?.onLine(line)) {
     if (streamer.error) {
       s.alarm = `ERROR ${streamer.error.code} — ${streamer.error.text}`
+      // Pin it to the source block that caused it, so the MDI page shows the error
+      // against the line the student typed rather than only as a code in a banner.
+      // `rows` maps wire back to source, because the run switches and the G43
+      // split may have moved things in between. The streamer's text already
+      // carries the HAAS note for the code.
+      const row = s.job?.rows?.[streamer.error.line - 1]
+      const bad = row === undefined ? null : s.job?.prog?.lines[row]
+      if (bad) bad.error = `error ${streamer.error.code}: ${streamer.error.text}`
+      // The ALARMS page is the history of what went wrong, and a rejected block
+      // belongs in it whether it came from a program or from the MDI page. Only
+      // the hand-sent lines reach the bare `error:` branch below, so without this
+      // every streamed rejection would be missing from the log.
+      logAlarm('ERROR', streamer.error.code, streamer.error.text, null)
       s.job = null
+      // A cycle that stopped on a bad block is over, so the timer stops with it.
+      // Nothing else clears it — the completion path needs a job to reach — and a
+      // clock still counting after an MDI block was rejected is a plain lie about
+      // what the machine is doing. Same treatment the DNC error path already gives.
+      s.cycleStartedAt = null
       // Bench-found firmware latch (2026-08-07, present on stock grblHAL too):
       // after an ok'd block, one errored block makes EVERY later g-code line
       // repeat the error until a `$` command clears it. A `$G` costs nothing,
@@ -1257,16 +1433,12 @@ function onLine (line) {
     return invalidate()
   }
   if (line.startsWith('error:')) {
+    // Nothing streamed produced this — the streamer claims its own errors above,
+    // with the HAAS note and the block it belongs to. What is left is a line this
+    // control sent by hand: a `$` command from the MDI page, or a key's own g-code.
     const n = Number(line.slice(6))
-    // The HAAS-aware half: not just "error 20" but what the code the student
-    // wrote MEANS on a HAAS and what to do here instead.
-    const last = s.mdi[s.mdi.length - 1]
-    const note = haasNote(last?.text)
-    const full = describeError(n) + (note ? ` ${note}` : '')
+    const full = describeError(n)
     s.message = `error ${n} — ${full}`
-    // Pin it to the MDI block that caused it. A student typing blocks by hand
-    // learns far more from "G1 X10 — needs a feed rate" than from the code alone.
-    if (last && !last.error) last.error = `error ${n}: ${full}`
     logAlarm('ERROR', n, full, null)
     // A job the board is running off its own card has stopped. Nothing here is
     // streaming it, so nothing else would ever notice — and the cycle timer would
@@ -1386,9 +1558,10 @@ function applyStatus (st) {
     // ...and back to the source row, because the run switches may have removed
     // blocks between the listing and the wire.
     const row = s.job.rows[Math.min(wireAt, s.job.rows.length - 1)] ?? 0
-    s.program.current = row + 1
+    // Onto whichever program is running — the selected one, or the MDI page.
+    s.job.prog.current = row + 1
 
-    const block = s.program.lines[s.program.current - 1]?.text
+    const block = s.job.prog.lines[row]?.text
     s.dtg = distanceToGo(block, {
       mpos: s.mpos,
       wco: s.wco,
@@ -1400,14 +1573,15 @@ function applyStatus (st) {
   }
 
   if (s.job?.sentAll && st.state === 'Idle') {
+    const { prog, mdi } = s.job
     s.job = null
-    s.message = 'program complete'
-    s.program.current = 0
+    s.message = mdi ? 'MDI complete' : 'program complete'
+    if (prog) prog.current = 0
     // A cycle that finished is a part made, and the counter is what a shop
     // actually watches. Only a completed cycle counts — one stopped by RESET
-    // clears the timer without incrementing anything.
-    s.lastCycleMs = s.cycleMs
-    s.parts++
+    // clears the timer without incrementing anything, and a handful of blocks
+    // typed into MDI is not a part either: that pane is labelled M30 CNT.
+    if (!mdi) { s.lastCycleMs = s.cycleMs; s.parts++ }
     s.cycleStartedAt = null
     // A program can leave the modal state, the work offsets and the tool length
     // offset anywhere at all. Re-read rather than assume they survived the cycle.
