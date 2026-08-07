@@ -1468,6 +1468,15 @@ async function connect () {
   try { await link?.disconnect() } catch { /* already gone */ }
   link = null
 
+  // Remember the operator's choice as soon as they commit to it, NOT once the
+  // machine answers. A connect that fails is exactly when the address matters
+  // most — a board that is switched off, or a typo worth correcting rather
+  // than retyping — and saving only on success threw the address away in both
+  // cases. The resolution order is unchanged: ?board= still wins, then the
+  // serving host, then this.
+  store.set(KIND, kind)
+  if (kind === 'websocket' && $('host').value) remember.set($('host').value)
+
   try {
     link = kind === 'websocket' ? websocketTransport({ host: $('host').value })
       : kind === 'serial' ? serialTransport()
@@ -1488,8 +1497,6 @@ async function connect () {
     s.link = link.kind.toUpperCase()
     // Only the network transport can write to the card — see sendToCard().
     s.boardHost = kind === 'websocket' ? $('host').value : null
-    store.set(KIND, kind)
-    if (kind === 'websocket' && $('host').value) remember.set($('host').value)
     link.send('$I\n')
     link.send('$G\n')
     link.send('$#\n')

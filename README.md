@@ -51,7 +51,10 @@ lease. It is resolved in this order:
 1. `?board=<addr>` in the URL — `http://localhost:8000/?board=192.168.0.113`.
    Bookmark one per machine in a classroom.
 2. The host that served the page, when installed on a board's SD card.
-3. The last address that connected successfully, remembered in `localStorage`.
+3. The last address typed into POWER ON, remembered in `localStorage`. It is
+   saved when the operator commits to it, not when the machine answers — a
+   board that is switched off, or a typo worth correcting, is exactly when
+   you want the address kept rather than thrown away.
 
 So local development against a bench board means passing `?board=` once; after
 that the plain URL remembers it.
