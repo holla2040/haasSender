@@ -2,7 +2,7 @@ import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
-import { screen, displayScale, HELP_ROWS, helpTotal } from './ui/screen.js'
+import { screen, displayScale, HELP_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
@@ -240,6 +240,15 @@ function press (id) {
     if (d !== undefined) { s.helpRow = Math.max(0, (s.helpRow ?? 0) + d); return invalidate() }
     if (id === 'home') { s.helpRow = 0; return invalidate() }
     if (id === 'end') { s.helpRow = helpTotal; return invalidate() }
+    // The g-code list is far longer than the manual notes above it, so left and
+    // right jump whole sections rather than paging there a screen at a time.
+    if (id === 'left' || id === 'right') {
+      const at = helpFrom(s)
+      s.helpRow = id === 'right'
+        ? (HELP_SECTIONS.find(i => i > at) ?? helpTotal)
+        : (HELP_SECTIONS.filter(i => i < at).pop() ?? 0)
+      return invalidate()
+    }
   }
 
   // PARAMETER / DIAGNOSTIC: the cursor walks the machine's settings, read-only.

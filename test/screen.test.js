@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fmt, displayScale, MM_PER_IN, clock } from '../src/ui/screen.js'
+import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS } from '../src/ui/screen.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
 // keeps showing its last value after the link drops is the same lie as a
@@ -35,4 +35,42 @@ test('cycle time reads as a control clock, and rolls over properly', () => {
   assert.equal(clock(61_000), '00:01:01')
   assert.equal(clock(3_599_000), '00:59:59')
   assert.equal(clock(3_661_000), '01:01:01')
+})
+
+// The g-code list is only worth having if every line of it is true, and the two
+// ways it can quietly stop being true are a link pasted from somewhere else and
+// a code listed twice with two different descriptions. Every host below was
+// fetched and its anchors read off the page; a new host appearing here means
+// someone added a reference nobody checked.
+const REFERENCE_HOSTS = ['linuxcnc.org', 'github.com']
+
+test('every HELP reference points at a host whose anchors were verified', () => {
+  for (const [label, , url] of HELP) {
+    if (!url) continue
+    const u = new URL(url)                        // throws on a malformed link
+    assert.equal(u.protocol, 'https:', `${label} link is not https`)
+    assert.ok(REFERENCE_HOSTS.includes(u.hostname), `${label} links to ${u.hostname}`)
+    // A code has to land on its own section. Dropping a student on the top of
+    // a 60-code page and leaving them to scroll is not a reference.
+    if (/^[GM]\d/.test(label)) assert.ok(u.hash, `${label} links to a page, not a section`)
+  }
+})
+
+test('no g-code or m-code is listed twice, and every line fits the pane', () => {
+  const codes = HELP.map(([label]) => label).filter(l => /^[GM]\d/.test(l))
+  assert.equal(new Set(codes).size, codes.length, 'a code is listed twice')
+  assert.ok(codes.length > 60, 'the code list lost most of its entries')
+
+  for (const [label, text] of HELP) {
+    assert.ok(label.length <= 14, `label "${label}" runs into the text column`)
+    // Entities are one glyph on screen however many characters they are here.
+    assert.ok(label.padEnd(14).length + text.replace(/&#\d+;/g, 'x').length <= 70,
+      `"${label}" line is wider than the pane`)
+  }
+})
+
+test('the section jumps land on section starts, in order', () => {
+  assert.equal(HELP_SECTIONS[0], 0)
+  assert.deepEqual(HELP_SECTIONS, [...HELP_SECTIONS].sort((a, b) => a - b))
+  for (const i of HELP_SECTIONS) assert.match(HELP[i][1], /^── /)
 })

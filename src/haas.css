@@ -571,6 +571,11 @@ body {
 .pane.active .dro b { color: #4d6b54; }
 
 .k { color: var(--screen-key); }
+/* HELP's g-code labels are links to the reference pages. They keep the label
+   colour they already had — a blue underlined word on a CRT-green pane reads as
+   a web page pasted into a control — and only the underline says "clickable". */
+.pane a { color: inherit; text-decoration: underline; text-underline-offset: .15em; }
+.pane a:hover { color: var(--screen-active); }
 .dim { color: var(--screen-dim); }
 .pane.active .dim { color: #4d6b54; }
 .pane.active .k { color: #7a5c00; }

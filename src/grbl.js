@@ -241,7 +241,10 @@ const HAAS_NOTES = [
   [/\bM0*39\b/i, 'M39 rotates the tool turret — no tool changer fitted.'],
   [/\bM0*4[12]\b/i, 'M41/M42 are spindle gear overrides — this spindle has no gearbox.'],
   [/\bM0*4[89]\b|\bM0*5\d\b/i, 'M48-M59 are program-check, pallet and relay codes this machine does not have.'],
-  [/\bM0*6[1-9]\b/i, 'M61-M69 user I/O: every output pin on this controller is already spoken for.'],
+  // M61 is not in this range: grblHAL implements it as "set current tool", and it
+  // works here — a student whose M61 was rejected for a missing Q word must not be
+  // told the machine has no pin for it. HELP lists it under the codes that run.
+  [/\bM0*6[2-9]\b/i, 'M62-M69 user I/O: every output pin on this controller is already spoken for.'],
   [/\bM0*7[589]\b/i, 'M75/M78/M79 are probing codes — no probe system fitted.'],
   [/\bM0*8[0-7]\b/i, 'M80-M87 drive doors, air guns and tool clamps — none fitted.'],
   [/\bM0*9[56]\b/i, 'M95 sleep / M96 input-jump are not supported on this control.'],
@@ -799,6 +802,232 @@ export function editBlock (block, at, op, value = '') {
   else if (op === 'insert') w.splice(at + 1, 0, value)
   else if (op === 'delete') w.splice(at, 1)
   return joinWords(w.filter(x => x !== undefined && x !== ''))
+}
+
+// ------------------------------------------------------- the machine's settings
+
+/**
+ * What each numbered setting IS, in the firmware's own words.
+ *
+ * Read off the machine's own `setting_detail[]` tables — grblhal-clearcore
+ * `src/grbl/settings.c` plus every driver and plugin file that registers its own
+ * — rather than from the grbl v1.1 wiki. The wiki documents stock grbl, which
+ * stops at $132; this board is grblHAL and answers `$$` with roughly twice that,
+ * so a wiki-sourced table would leave half the PARAMETER page blank and rename
+ * the half it did cover ($32 is "mode of operation" here, not "laser mode").
+ *
+ * The firmware's exact spelling is kept on purpose: a number read on this page
+ * then matches what grblHAL's own documentation and ioSender call it. Nothing is
+ * invented — a setting this table does not know says so rather than guessing.
+ */
+const SETTING = {
+  0: 'Step pulse time (microseconds)',
+  1: 'Step idle delay (milliseconds)',
+  2: 'Step pulse invert',
+  3: 'Step direction invert',
+  4: 'Invert stepper enable output(s)',
+  5: 'Invert limit inputs',
+  6: 'Invert probe inputs',
+  7: 'Deprecated',
+  8: 'Ganged axes direction invert',
+  9: 'PWM spindle options',
+  10: 'Status report options',
+  11: 'Junction deviation (mm)',
+  12: 'Arc tolerance (mm)',
+  13: 'Report in inches — governs what MPos: means here',
+  14: 'Invert control inputs',
+  15: 'Invert coolant outputs',
+  16: 'Invert spindle signals',
+  17: 'Pullup disable control inputs',
+  18: 'Pullup disable limit inputs',
+  19: 'Pullup disable probe inputs',
+  20: 'Soft limits enable',
+  21: 'Hard limits enable',
+  22: 'Homing cycle enable',
+  23: 'Homing direction invert',
+  24: 'Homing locate feed rate (mm/min)',
+  25: 'Homing search seek rate (mm/min)',
+  26: 'Homing switch debounce delay (milliseconds)',
+  27: 'Homing switch pull-off distance (mm)',
+  28: 'G73 Retract distance (mm)',
+  29: 'Pulse delay (microseconds)',
+  30: 'Maximum spindle speed (RPM)',
+  31: 'Minimum spindle speed (RPM)',
+  32: 'Mode of operation',
+  33: 'Spindle PWM frequency (Hz)',
+  34: 'Spindle PWM off value (percent)',
+  35: 'Spindle PWM min value (percent)',
+  36: 'Spindle PWM max value (percent)',
+  37: 'Steppers to keep enabled',
+  38: 'Spindle pulses per revolution (PPR)',
+  39: 'Enable legacy RT commands',
+  40: 'Limit jog commands',
+  41: 'Parking cycle',
+  42: 'Parking axis',
+  43: 'Homing passes',
+  44: 'Axes homing, first phase',
+  45: 'Axes homing, second phase',
+  46: 'Axes homing, third phase',
+  47: 'Axes homing, fourth phase',
+  48: 'Axes homing, fifth phase',
+  49: 'Axes homing, sixth phase',
+  56: 'Parking pull-out distance (mm)',
+  57: 'Parking pull-out rate (mm/min)',
+  58: 'Parking target (mm)',
+  59: 'Parking fast rate (mm/min)',
+  60: 'Restore overrides',
+  61: 'Safety door options',
+  62: 'Sleep enable',
+  63: 'Feed hold actions',
+  64: 'Force init alarm',
+  65: 'Probing options',
+  66: 'Spindle linearisation, 1st point',
+  67: 'Spindle linearisation, 2nd point',
+  68: 'Spindle linearisation, 3rd point',
+  69: 'Spindle linearisation, 4th point',
+  70: 'Network Services',
+  90: 'Spindle sync P-gain',
+  91: 'Spindle sync I-gain',
+  92: 'Spindle sync D-gain',
+  95: 'Spindle sync PID max I error',
+  300: 'Hostname',
+  301: 'IP Mode',
+  302: 'IP Address',
+  303: 'Gateway',
+  304: 'Netmask',
+  305: 'Telnet port',
+  306: 'HTTP port',
+  307: 'Websocket port',
+  308: 'FTP port',
+  330: 'Admin Password',
+  331: 'User Password',
+  340: 'Spindle at speed tolerance (percent)',
+  341: 'Tool change mode',
+  342: 'Tool change probing distance (mm)',
+  343: 'Tool change locate feed rate (mm/min)',
+  344: 'Tool change search seek rate (mm/min)',
+  345: 'Tool change probe pull-off rate (mm/min)',
+  346: 'Tool change options',
+  347: 'Dual axis length fail (percent)',
+  348: 'Dual axis length fail min (mm)',
+  349: 'Dual axis length fail max (mm)',
+  370: 'Invert I/O Port inputs',
+  371: 'I/O Port inputs pullup disable',
+  372: 'Invert I/O Port outputs',
+  373: 'I/O Port outputs as open drain',
+  374: 'ModBus baud rate',
+  375: 'ModBus RX timeout (milliseconds)',
+  376: 'Rotary axes',
+  384: 'Disable G92 persistence',
+  392: 'Spindle on delay (s)',
+  393: 'Coolant on delay (s)',
+  394: 'Spindle on delay (s)',
+  395: 'Default spindle',
+  396: 'WebUI timeout (minutes)',
+  397: 'WebUI auto report interval (milliseconds)',
+  398: 'Planner buffer blocks',
+  399: 'CAN bus baud rate',
+  481: 'Autoreport interval (ms)',
+  482: 'Timezone offset',
+  484: 'Unlock required after E-Stop',
+  485: 'Keep tool number over reboot',
+  486: 'Lock coordinate systems',
+  487: 'PWM2 spindle on port',
+  488: 'PWM2 spindle direction port',
+  489: 'PWM2 spindle PWM port',
+  519: 'Encoder spindle',
+  530: 'MQTT broker IP Address',
+  531: 'MQTT broker port',
+  532: 'MQTT broker username',
+  533: 'MQTT broker password',
+  534: 'Output NGC debug messages',
+  535: 'MAC Address',
+  536: 'LED strip 1 length',
+  537: 'LED strip 2 length',
+  538: 'Fast rotary go to G28',
+  539: 'Spindle off delay (s)',
+  600: 'Unit ? IP address',
+  601: 'Unit ? port',
+  602: 'Unit ? ID',
+  640: 'Segment length (mm)',
+  641: 'Forearm length (mm)',
+  642: 'Bicep length (mm)',
+  643: 'Base radius (mm)',
+  644: 'End effector radius (mm)',
+  645: 'Base to floor (mm)',
+  646: 'Home position (deg)',
+  647: 'Flags...',
+  648: 'Max angle (deg)',
+  650: 'File systems options',
+  671: 'Invert home inputs',
+  673: 'Coolant on delay (s)',
+  675: 'Macro ATC options',
+  676: 'Reset actions',
+  680: 'Stepper enable delay (ms)',
+  681: 'ModBus serial format',
+  700: 'Subroutine options',
+  709: 'PWM2 spindle options',
+  716: 'PWM2 spindle signals invert',
+  730: 'PWM2 spindle max speed (RPM)',
+  731: 'PWM2 spindle min speed (RPM)',
+  733: 'PWM2 spindle PWM frequency (Hz)',
+  734: 'PWM2 spindle PWM off value (percent)',
+  735: 'PWM2 spindle PWM min value (percent)',
+  736: 'PWM2 spindle PWM max value (percent)',
+  737: 'PWM2 spindle linearisation, 1st point',
+  738: 'PWM2 spindle linearisation, 2nd point',
+  739: 'PWM2 spindle linearisation, 3rd point',
+  740: 'PWM2 spindle linearisation, 4th point',
+  742: 'Motor warning inputs enable',
+  743: 'Invert motor warning inputs',
+  744: 'Motor fault inputs enable',
+  745: 'Invert motor fault inputs'
+}
+
+/**
+ * The per-axis settings, which are numbered rather than named.
+ *
+ * settings.h: `Setting_AxisSettingsBase = 100` and `AXIS_SETTINGS_INCREMENT 10`,
+ * so the number is `base + 10 x family + axis` — $130 is X max travel, $131 Y,
+ * $132 Z, $133 A. Computing it beats listing nine families times six axes, and
+ * it cannot drift out of step with the machine the way 54 transcribed rows would.
+ *
+ * 140 and 150 are in the numbering but the core registers no label for them; the
+ * names here are their enum names, and this board's driver does not use either.
+ */
+const AXIS_SETTING = {
+  100: 'travel resolution (step/mm)',
+  110: 'maximum rate (mm/min)',
+  120: 'acceleration (mm/sec^2)',
+  130: 'maximum travel (mm)',
+  140: 'stepper current',
+  150: 'microsteps',
+  160: 'backlash compensation (mm)',
+  170: 'dual axis offset (mm)',
+  180: 'homing locate feed rate (mm/min)',
+  190: 'homing search seek rate (mm/min)',
+  800: 'jerk (mm/sec^3)'
+}
+
+/** The axis a per-axis setting number lands on. This board reports `[AXS:4:XYZA]`. */
+const AXIS_LETTERS = 'XYZABC'
+
+/**
+ * One line of English for a setting number, or null when the firmware has no name
+ * for it — the PARAMETER page prints the machine's own number either way, and a
+ * blank column is a smaller lie than an invented description.
+ */
+export function describeSetting (n) {
+  n = Number(n)
+  if (!Number.isInteger(n) || n < 0) return null
+
+  const base = n >= 800 ? 800 : 100
+  if ((n >= 100 && n < 200) || (n >= 800 && n < 900)) {
+    const family = AXIS_SETTING[base + Math.floor((n - base) / 10) * 10]
+    const axis = AXIS_LETTERS[(n - base) % 10]
+    if (family && axis) return `${axis}-axis ${family}`
+  }
+  return SETTING[n] ?? null
 }
 
 /**

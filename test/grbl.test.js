@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as grblNS from '../src/grbl.js'
-import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, parseOWord, describeSetting, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -137,6 +137,44 @@ test('parseOWord takes a typed program number and nothing else', () => {
   assert.equal(parseOWord('O'), null)
   assert.equal(parseOWord(''), null)
   assert.equal(parseOWord(undefined), null)
+})
+
+// The PARAMETER page's third column. The numbers come off the machine, so the
+// descriptions have to be the machine's own — read out of grblHAL core's
+// setting_detail[] tables, not the grbl v1.1 wiki, which stops at $132 and calls
+// $32 "laser mode" where this firmware calls it the mode of operation.
+test('describeSetting names the settings this machine actually reports', () => {
+  // Everything the simulator answers `$$` with — the classroom seat must not
+  // show a blank column where the bench board shows a description.
+  for (const n of [13, 20, 21, 22, 30, 31, 32, 110, 111, 112, 113,
+    130, 131, 132, 133]) {
+    assert.ok(describeSetting(n), `no description for $${n}`)
+  }
+
+  assert.equal(describeSetting(13), 'Report in inches — governs what MPos: means here')
+  assert.equal(describeSetting(32), 'Mode of operation')
+  assert.equal(describeSetting(341), 'Tool change mode')
+
+  // Object.keys() hands the page strings, not numbers.
+  assert.equal(describeSetting('11'), 'Junction deviation (mm)')
+})
+
+// settings.h numbers these `base + 10 * family + axis`, so they are computed
+// rather than listed. Getting the arithmetic backwards would label X's travel as
+// Y's — the kind of wrong that reads as right.
+test('describeSetting works out which axis a per-axis setting belongs to', () => {
+  assert.equal(describeSetting(130), 'X-axis maximum travel (mm)')
+  assert.equal(describeSetting(131), 'Y-axis maximum travel (mm)')
+  assert.equal(describeSetting(132), 'Z-axis maximum travel (mm)')
+  assert.equal(describeSetting(133), 'A-axis maximum travel (mm)')
+  assert.equal(describeSetting(100), 'X-axis travel resolution (step/mm)')
+  assert.equal(describeSetting(122), 'Z-axis acceleration (mm/sec^2)')
+  assert.equal(describeSetting(803), 'A-axis jerk (mm/sec^3)')
+
+  // Not every number in the band is a family; nothing may be invented for one.
+  assert.equal(describeSetting(199), null)
+  assert.equal(describeSetting(9999), null)
+  assert.equal(describeSetting('nonsense'), null)
 })
 
 // --------------------------------------------------------------- the real check

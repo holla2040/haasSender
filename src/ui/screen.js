@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit-html'
-import { WCS, TOOL_COUNT, words, modalGroups } from '../grbl.js'
+import { WCS, TOOL_COUNT, words, modalGroups, describeSetting } from '../grbl.js'
 import { UNAVAILABLE, VERIFIED, GROUPS } from '../keys.js'
 
 // Counted from the key tables rather than written down, so the HELP page cannot
@@ -251,12 +251,16 @@ move with no other words on the line.</pre>`
 /**
  * PARAMETER / DIAGNOSTIC — the machine's own settings, as it reports them.
  *
- * Deliberately not curated. grbl has around ninety numbered settings and deciding
- * which ten a student "should" see is a judgement this control has no business
- * making silently — the numbers are the machine's, and `$$` is what it says. What
- * is added is the handful of descriptions that matter for reading the rest of
- * this control, and nothing is editable here: writing a setting is a different
- * kind of act from writing a work offset, and it is not one to do by accident.
+ * Deliberately not curated. grblHAL answers `$$` with something like ninety
+ * numbers and deciding which ten a student "should" see is a judgement this
+ * control has no business making silently — the numbers are the machine's, and
+ * `$$` is what it says.
+ *
+ * Three columns: the number, the value, and what the setting IS. That third one
+ * is the difference between a page of numbers and a page a student can read, and
+ * it comes from the firmware's own `setting_detail[]` tables so it says what
+ * grblHAL says. Nothing is editable here: writing a setting is a different kind
+ * of act from writing a work offset, and not one to do by accident.
  */
 function paramBody (s) {
   const keys = Object.keys(s.settings)
@@ -268,22 +272,9 @@ here to ask the machine for $$.</pre>`
   }
   const from = Math.max(0, Math.min(s.paramRow - 4, keys.length - 8))
   return html`<pre>${keys.slice(from, from + 8).map((k, i) => html`<div
-    class=${from + i === s.paramRow ? 'cur' : ''}>${('   $' + k + '        ').slice(0, 8)}${
-    ('            ' + s.settings[k]).slice(-13)}  <span class="dim">${SETTING_NOTE[k] ?? ''}</span></div>`)}<span class="dim">Read-only, and the machine's own. $13 decides what MPos: means.</span></pre>`
-}
-
-/** The few settings that explain how the rest of this control behaves. */
-const SETTING_NOTE = {
-  13: 'report in inches — governs what MPos: means',
-  20: 'soft limits',
-  21: 'hard limits',
-  22: 'homing cycle enabled',
-  30: 'max spindle RPM',
-  31: 'min spindle RPM',
-  32: 'laser mode',
-  130: 'X max travel',
-  131: 'Y max travel',
-  132: 'Z max travel'
+    class=${from + i === s.paramRow ? 'cur' : ''}>${('  $' + k + '       ').slice(0, 7)}${
+    ('          ' + s.settings[k]).slice(-11)}  <span class="dim">${
+    describeSetting(k) ?? '—'}</span></div>`)}<span class="dim">Read-only, and the machine's own. $13 decides what MPos: means.</span></pre>`
 }
 
 /**
@@ -342,7 +333,9 @@ const MAIN_TITLE = {
 /**
  * HELP — on a real HAAS this is the manual on the control. Here the useful thing
  * is what is different, because a student moving between this and a real machine
- * needs to know exactly where the replica stops.
+ * needs to know exactly where the replica stops. It carries the g-code and
+ * m-code list for the same reason: which codes this machine answers to is the
+ * other half of that question, and no HAAS book can tell them.
  *
  * The count of keys that can never work is read from `UNAVAILABLE` rather than
  * written down, so this page cannot drift out of step with the keypad.
@@ -355,12 +348,131 @@ const MAIN_TITLE = {
  * that had to clear 1080, and the second cut lost things worth knowing. Length is
  * no longer the constraint — legibility is.
  *
- * Each entry is [label, text]; a blank label continues the one above it.
+ * Each entry is [label, text, url?]; a blank label continues the one above it,
+ * and a url turns the label into a link to that code's reference page.
+ *
+ * The reference bases. LinuxCNC's g-code pages are the definition grblHAL says
+ * it implements, so they are the first place to send a student; the grblHAL wiki
+ * covers the codes that are grblHAL's own, which LinuxCNC has never heard of.
+ * Every anchor below was taken from the pages themselves, not guessed.
  */
-const HELP = [
+const LC_G = 'https://linuxcnc.org/docs/html/gcode/g-code.html#gcode:'
+const LC_M = 'https://linuxcnc.org/docs/html/gcode/m-code.html#mcode:'
+const HAL = 'https://github.com/grblHAL/core/wiki/Additional-G--and-M-codes#user-content-'
+const HAL_ALL = HAL + 'codes-available-for-all-drivers-and-configurations'
+const HAL_PLUGIN = HAL + 'codes-available-if-driver-or-plugins-supports-them'
+const HAL_LATHE = HAL + 'codes-available-in-lathe-mode-requires-driver-and-hardware-encoder-support'
+
+/**
+ * The g-codes this machine runs, verified one at a time against the parser in
+ * `src/grbl/gcode.c` of the firmware this control is built for — not against the
+ * g-code standard, and not against grblHAL's own documentation, both of which
+ * describe codes this build compiles out. A help page that lists a code the
+ * machine answers with `error:20` teaches a student to distrust the page.
+ */
+const G_CODES = [
+  ['G0', 'rapid to the point. Positioning, never cutting.', LC_G + 'g0'],
+  ['G1', 'straight cut at the F feed rate.', LC_G + 'g1'],
+  ['G2 G3', 'arc clockwise / anti-clockwise, by I J K or R.', LC_G + 'g2-g3'],
+  ['G4', 'dwell P seconds before the next block.', LC_G + 'g4'],
+  ['G5', 'cubic spline, I J P Q.', LC_G + 'g5'],
+  ['G5.1', 'quadratic spline, I J.', LC_G + 'g5.1'],
+  ['G10 L2 L20', 'set work offset P to values, or to where it is.', LC_G + 'g10-l2'],
+  ['G10 L1 L10', 'write tool P into the tool table. L11 too.', LC_G + 'g10-l1'],
+  ['G17 G18 G19', 'plane for arcs and cycles: XY, ZX, YZ.', LC_G + 'g17-g19.1'],
+  ['G20 G21', 'inch / millimetre.', LC_G + 'g20-g21'],
+  ['G28 G28.1', 'go to stored position 1 / store it from here.', LC_G + 'g28-g28.1'],
+  ['G30 G30.1', 'go to stored position 2 / store it from here.', LC_G + 'g30-g30.1'],
+  ['G38.2-G38.5', 'probe toward / away. .3 and .5 do not alarm.', LC_G + 'g38'],
+  ['G40', 'cutter compensation off — the only state here.', LC_G + 'g40'],
+  ['G43', 'tool length offset from the table, H picks it.', LC_G + 'g43'],
+  ['G43.1', 'dynamic tool length offset, given in the block.', LC_G + 'g43.1'],
+  ['G43.2', 'add another tool length to the one in force.', LC_G + 'g43.2'],
+  ['G49', 'cancel the tool length offset.', LC_G + 'g49'],
+  ['G50 G51', 'cancel / set axis scaling. grblHAL, not NIST.', HAL_ALL],
+  ['G53', 'move in machine coordinates, this block only.', LC_G + 'g53'],
+  ['G54-G59', 'work coordinate systems 1 to 6.', LC_G + 'g54-g59.3'],
+  ['G59.1-G59.3', 'three more systems. G154 P1-P3 on a HAAS.', LC_G + 'g54-g59.3'],
+  ['G61', 'exact path mode — the only mode in this build.', LC_G + 'g61'],
+  ['G65', 'call macro P<n>.macro off the card. n is 100+.', HAL_PLUGIN],
+  ['G66 G67', 'call it after every motion / stop doing that.', HAL_PLUGIN],
+  ['G73', 'peck drill breaking the chip. Q peck, R plane.', LC_G + 'g73'],
+  ['G80', 'cancel the canned cycle.', LC_G + 'g80'],
+  ['G81', 'drill: feed to Z, rapid out.', LC_G + 'g81'],
+  ['G82', 'drill and dwell P at the bottom.', LC_G + 'g82'],
+  ['G83', 'peck drill, full retract each peck. Q peck.', LC_G + 'g83'],
+  ['G85', 'bore: feed in, feed back out.', LC_G + 'g85'],
+  ['G86', 'bore: spindle stops at the bottom, rapid out.', LC_G + 'g86'],
+  ['G89', 'bore: dwell P at the bottom, then feed out.', LC_G + 'g89'],
+  ['G90 G91', 'absolute / incremental positions.', LC_G + 'g90-g91'],
+  ['G91.1', 'arc centres are incremental — always true here.', LC_G + 'g90.1-g91.1'],
+  ['G92', 'shift the coordinate system by what you give.', LC_G + 'g92'],
+  ['G92.1 G92.2', 'clear that shift / suspend it.', LC_G + 'g92.1-g92.2'],
+  ['G92.3', 'restore the suspended shift.', LC_G + 'g92.3'],
+  ['G93 G94', 'feed as inverse time / units per minute.', LC_G + 'g93-g94-g95'],
+  ['G98 G99', 'canned cycles return to initial Z / the R plane.', LC_G + 'g98-g99']
+]
+
+/**
+ * The m-codes, same rule. The last five are this firmware's own: they exist so a
+ * student's HAAS habits reach something on this machine, and no standards page
+ * documents them — the 2014 Mill Operator's Manual does, and it is on paper.
+ */
+const M_CODES = [
+  ['M0', 'program stop. CYCLE START carries on.', LC_M + 'm0-m1'],
+  ['M1', 'optional stop, when OPT STOP is on.', LC_M + 'm0-m1'],
+  ['M2', 'program end.', LC_M + 'm2-m30'],
+  ['M30', 'program end, rewind to the top.', LC_M + 'm2-m30'],
+  ['M60', 'pallet change pause. A plain stop here.', LC_M + 'm60'],
+  ['M3 M4 M5', 'spindle on CW / on CCW / off. S sets rpm.', LC_M + 'm3-m4-m5'],
+  ['M6', 'tool change: it holds and waits for you.', LC_M + 'm6'],
+  ['M7', 'mist coolant on. Same output as M88.', LC_M + 'm7-m8-m9'],
+  ['M8', 'flood coolant on.', LC_M + 'm7-m8-m9'],
+  ['M9', 'all coolant off.', LC_M + 'm7-m8-m9'],
+  ['M48 M49', 'enable / disable the feed and speed overrides.', LC_M + 'm48-m49'],
+  ['M50', 'feed override control. P0 turns it off.', LC_M + 'm50'],
+  ['M51', 'spindle override control. P0 turns it off.', LC_M + 'm51'],
+  ['M53', 'feed hold control. P0 turns it off.', LC_M + 'm53'],
+  ['M61', 'set the current tool number to Q. No change.', LC_M + 'm61'],
+  ['M70 M71', 'save the modal state / invalidate the saved one.', LC_M + 'm70'],
+  ['M72 M73', 'restore it / save with automatic restore.', LC_M + 'm72'],
+  ['M98', 'call macro P<n>.macro off the card. n is 100+.', LC_M + 'm98-m99'],
+  ['', 'An O<n> sub in the same file wants $700=1.'],
+  ['M99', 'return from that sub.', LC_M + 'm98-m99'],
+  ['M31 M33', 'chip conveyor forward / stop. This firmware.'],
+  ['M88 M89', 'through-spindle coolant on / off. On M7 mist.'],
+  ['M97', 'HAAS sub: run N<p> to M99, L times. Off the card'],
+  ['', 'only — a streamed job has no file to seek in.']
+]
+
+/**
+ * Codes the parser knows and this machine still refuses, which is the pair a
+ * student hits and cannot explain: the book says the code exists, the control
+ * says error 20. Each line says which piece of hardware or build option is the
+ * one missing, because that is the answer to "why not".
+ */
+const REFUSED = [
+  ['G7 G8', 'lathe diameter / radius mode. This is a mill.', LC_G + 'g7'],
+  ['G96 G97', 'surface speed / rpm mode. Lathe mode only.', HAL_LATHE],
+  ['G33 G76', 'synchronised feed and threading: no encoder.', LC_G + 'g33'],
+  ['G84', 'tapping wants the spindle to report at-speed.', LC_G + 'g84'],
+  ['G95', 'feed per revolution needs that encoder too.', LC_G + 'g93-g94-g95'],
+  ['G61.1 G64', 'exact stop and blending are not in this build.', LC_G + 'g64'],
+  ['M56', 'parking override control. Parking is not on.'],
+  ['M62-M68', 'digital and analogue I/O: no ports registered.', HAL_PLUGIN]
+]
+
+/** A section rule, drawn to the width the pane's text column already uses. */
+const rule = (title) => ['', `── ${title} ${'─'.repeat(Math.max(0, 52 - title.length))}`]
+
+/** Where the replica stops being a HAAS — the page's original job. */
+const DIVERGENCES = [
   ['', 'A HAAS-lookalike control driving a grblHAL machine. The'],
   ['', 'keypad, the panes and the modes are the real layout. The'],
   ['', 'machine underneath is not a HAAS. Where that shows:'],
+  ['', ''],
+  ['', 'Cursor left and right jump between the four sections.'],
+  ['', 'Every code listed is a link to its reference page.'],
   ['', ''],
   ['Handwheel', 'Turn it, or scroll on it. It moves the axis a jog'],
   ['', 'key last picked — the icon bar shows which — by one'],
@@ -404,7 +516,8 @@ const HELP = [
   ['', 'on the board itself, off its own card — the only way'],
   ['', 'to run one too big to copy. SEND writes back.'],
   ['', ''],
-  ['$ commands', 'SHIFT then 5 types the $ character. $X clears an'],
+  ['$ commands', 'SHIFT then 5 types the $ character. $X clears an',
+    'https://github.com/gnea/grbl/wiki/Grbl-v1.1-Commands'],
   ['', 'alarm, $H homes. The ALARMS page says which is which.'],
   ['', ''],
   ['EMERGENCY', 'A software reset. It is NOT a hardware E-stop and'],
@@ -414,13 +527,45 @@ const HELP = [
   ['', 'limit switches. It says so when pressed.']
 ]
 
+/**
+ * The page, one flat list of lines, and the row each section starts on.
+ *
+ * Four sections is more than PAGE UP and PAGE DOWN want to walk a line at a
+ * time, so the cursor's left and right — which this pane had no use for —
+ * jump section to section. The indices are counted while the list is built
+ * rather than written down, which is the same reason the faded-key count is.
+ */
+const SECTIONS = [
+  ['WHERE THIS CONTROL DIFFERS', DIVERGENCES],
+  ['G CODES THIS MACHINE RUNS', G_CODES],
+  ['M CODES THIS MACHINE RUNS', M_CODES],
+  ['CODES IT WILL REFUSE', REFUSED]
+]
+
+export const HELP = []
+export const HELP_SECTIONS = []
+
+for (const [title, lines] of SECTIONS) {
+  HELP_SECTIONS.push(HELP.length)
+  HELP.push(rule(title), ...lines, ['', ''])
+}
+
 /** How many lines of HELP the pane shows at once. */
 export const HELP_ROWS = 10
 
+/**
+ * A code with a reference is a link to it. The pendant it copies is a sealed
+ * control with a paper manual beside it; this one is a browser, and a student
+ * who wants to know what G83's Q actually does is one click from the page that
+ * defines it. Only the label links — underlining the padding as well draws a
+ * yellow rule across the pane.
+ */
 function helpBody (s) {
   const from = helpFrom(s)
-  return html`<pre>${HELP.slice(from, from + HELP_ROWS).map(([label, text]) => html`<div
-    ><span class="k">${(label + '              ').slice(0, 14)}</span>${text}</div>`)}</pre>`
+  return html`<pre>${HELP.slice(from, from + HELP_ROWS).map(([label, text, url]) => html`<div
+    ><span class="k">${url
+      ? html`<a href=${url} target="_blank" rel="noopener">${label}</a>`
+      : label}${' '.repeat(Math.max(0, 14 - label.length))}</span>${text}</div>`)}</pre>`
 }
 
 /** Clamped so PAGE DOWN cannot walk off the end and leave a blank page. */
