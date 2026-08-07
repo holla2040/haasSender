@@ -919,8 +919,12 @@ const SETTING = {
   375: 'ModBus RX timeout (milliseconds)',
   376: 'Rotary axes',
   384: 'Disable G92 persistence',
-  392: 'Spindle on delay (s)',
-  393: 'Coolant on delay (s)',
+  // The firmware names these two exactly as it names $394 and $673 — the group
+  // they sit in (Group_SafetyDoor) is what separates them, and the PARAMETER page
+  // has no column for a group. So the group goes in the text: two rows reading
+  // "Spindle on delay" with different numbers is a page that cannot be read.
+  392: 'Spindle on delay, safety door (s)',
+  393: 'Coolant on delay, safety door (s)',
   394: 'Spindle on delay (s)',
   395: 'Default spindle',
   396: 'WebUI timeout (minutes)',

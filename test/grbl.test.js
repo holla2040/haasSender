@@ -159,6 +159,21 @@ test('describeSetting names the settings this machine actually reports', () => {
   assert.equal(describeSetting('11'), 'Junction deviation (mm)')
 })
 
+// Two rows on the PARAMETER page reading the same words under different numbers
+// is a page the operator cannot act on. The firmware allows it — $392 and $394
+// are both literally "Spindle on delay", separated only by a settings group this
+// page has no column for — so the distinguishing has to happen here.
+test('no two settings are described in the same words', () => {
+  const byText = new Map()
+  for (let n = 0; n <= 1000; n++) {
+    const text = describeSetting(n)
+    if (text) byText.set(text, [...(byText.get(text) ?? []), n])
+  }
+  const clashes = [...byText].filter(([, ns]) => ns.length > 1)
+  assert.deepEqual(clashes, [], `settings share a description: ${
+    clashes.map(([t, ns]) => `$${ns.join('/$')} "${t}"`).join(', ')}`)
+})
+
 // settings.h numbers these `base + 10 * family + axis`, so they are computed
 // rather than listed. Getting the arithmetic backwards would label X's travel as
 // Y's — the kind of wrong that reads as right.
