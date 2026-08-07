@@ -5,6 +5,12 @@ pendant, so students learning on HAAS machines can practise the real workflow �
 modes, display panes, HANDLE JOG, CYCLE START, offsets, on-control editing —
 against a grblHAL machine, a USB GRBL board, or nothing at all.
 
+**[Try it in a browser →](https://holla2040.github.io/haasSender/)** — the built
+page on GitHub Pages, nothing to install. It is served over https, which blocks a
+`ws://` link to a machine on your LAN, so that page is the **simulator and USB
+serial**. To drive a board over WebSocket, run it locally or load it from the
+board's own card.
+
 ![haasSender running a program on the built-in simulator](images/screenshot.jpg)
 
 *Mid-cut in `OPERATION: MEM` — spindle at 2400 FWD, coolant on, and the block
@@ -34,7 +40,7 @@ browser** — after that `getPorts()` reconnects with no dialog at all.
 
 ```
 npm install
-npm test          # 50 tests, no hardware needed
+npm test          # 88 tests, no hardware needed
 npm run dev       # http://localhost:8000
 npm run build     # dist/index.html.gz for the board's SD card
 ```
@@ -115,6 +121,7 @@ rather than trusting a constant; `Ln:` is present so the running block comes fre
 | `src/haas.css` | Palette sampled from the manual artwork |
 | `src/main.js` | State, key dispatch and the render loop |
 | `build.js` | esbuild → inline → gzip, with a size budget check |
+| `docs/index.html` | The same self-contained page, where GitHub Pages serves it from — rewritten by every build |
 | `reference/` | Where the HAAS manual goes — see [reference/README.md](reference/README.md) |
 | `history/` | Session transcript and design plan |
 

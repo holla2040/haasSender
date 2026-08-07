@@ -51,6 +51,11 @@ await mkdir(OUT, { recursive: true })
 await writeFile(`${OUT}/index.html`, inlined)
 await writeFile(`${OUT}/index.html.gz`, gz)
 
+// docs/ is what GitHub Pages serves. Same self-contained file, written here on
+// every build so the public page cannot drift from what goes on the card.
+await mkdir('docs', { recursive: true })
+await writeFile('docs/index.html', inlined)
+
 const kb = (n) => (n / 1024).toFixed(1) + ' KB'
 console.log(`bundle   ${kb(js.length)}`)
 console.log(`html     ${kb(inlined.length)}`)
