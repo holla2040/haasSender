@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import * as grblNS from '../src/grbl.js'
 import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
@@ -455,4 +456,38 @@ test('HAAS G51 P translates to the MACH3 factor form; centre forms pass through'
 test('a P-less HAAS G86 gains P0 on the wire — grblHAL requires the dwell word', () => {
   assert.deepEqual(wireLine('G86 Z-2. R1. F500.', {}), ['G86 P0 Z-2. R1. F500.'])
   assert.deepEqual(wireLine('G86 P0.1 Z-2. R1. F500.', {}), ['G86 P0.1 Z-2. R1. F500.'])
+})
+
+test('haasNote explains the HAAS meaning of rejected codes, and stays quiet otherwise', () => {
+  const { haasNote } = grblNS
+  assert.match(haasNote('G12 I0.5 F10'), /pocket milling/i)
+  assert.match(haasNote('G41 D1'), /cutter compensation/i)
+  assert.match(haasNote('G84 Z-1 R1 F100'), /spindle encoder/)
+  assert.match(haasNote('M19'), /orient/i)
+  assert.match(haasNote('G154 P44'), /P1-P3/)
+  assert.equal(haasNote('G1 X10 F100'), null)
+  assert.equal(haasNote('G43.1 Z-5'), null)   // G41/42 regex must not eat G43.x
+})
+
+test('a streamed rejected block carries its HAAS note in the halt message', () => {
+  const s = new Streamer(() => {}, 1024)
+  s.start(['G0 X1', 'G84 Z-1 R1 F100', 'G0 X2'])
+  s.onLine('ok')
+  s.onLine('error:20')
+  assert.match(s.error.text, /rigid tapping needs a spindle encoder/i)
+})
+
+test('G44 becomes a negated G43.1, and G110-G112 become G59.1-3', () => {
+  assert.deepEqual(wireLine('G44 H3 Z50.', { tools: { 3: -20 } }), ['G43.1 Z20.0000', 'Z50.'])
+  assert.deepEqual(wireLine('G111 G0 X1', {}), ['G59.2 G0 X1'])
+  assert.deepEqual(wireLine('G113', {}), ['G113'])   // beyond the three: honest error downstream
+})
+
+test('a canned-cycle P is sticky across cycle changes until G0/G1/G80, like the manual', () => {
+  // Manual p.232: the P carries into later cycles "unless canceled
+  // (G00, G01, G80 or the [RESET] button)".
+  const lines = prepare(['G82 P0.3 Z-1 R1 F100', 'G86 Z-2 R1 F100', 'G1 X0 F100', 'G89 Z-1 R1 F100', 'M30'].join('\n'))
+  const { wire } = wireProgram(lines, {})
+  assert.equal(wire[1], 'G86 P0.3 Z-2 R1 F100', 'the G82 P carries onto the P-less G86')
+  assert.equal(wire[3], 'G89 P0 Z-1 R1 F100', 'G1 cancelled the sticky — the HAAS default of no dwell applies')
 })

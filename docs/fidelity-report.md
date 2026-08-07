@@ -96,15 +96,37 @@ the end of each section so they don't get re-litigated.
 - D1 and D3 confirmed rendered; mode bar `SETUP: JOG` + right-side display
   name confirmed; three-state power flow (off → dialog → live sim) confirmed.
 
-**Still open (biggest first):** D2 duplicate program pane (needs a design
-decision: what pane 3 shows while a program runs); F1-replace/K4-wheel/W5-create
-browser confirmations (code-tested, one visual pass outstanding); Run-Stop-
-Jog-Continue; the remaining MISSING/FIRMWARE backlog (G70-72 bolt patterns,
-M48 pre-flight, M76/M77, instructor-lockout settings group, timers pane
-Remaining/M30#2, beacon states); minimize + file the firmware error latch
-upstream; G86's missing word. Deliberate sim divergence: the sim does NOT
-replicate the firmware error latch — it is a bug being mitigated, not behavior
-to teach.
+## Overnight pass, 2026-08-07 (tests green)
+
+- **HAAS-aware error explanations**: a rejected block now says what the
+  student's code MEANS — "G12/G13 is circular pocket milling on a HAAS. No
+  pocket cycle here — mill it with G2/G3 arcs" — in the MDI pin, the streamer
+  halt and the alarm log. ~35 note families covering the manual's G/M tables;
+  the table never invents a HAAS behaviour.
+- **Dialect batch**: G44 H → negated G43.1 (own block); G110-G112 → G59.1-3;
+  P-less G82/G86/G89 gain the HAAS default P0; the canned-cycle P is sticky
+  across cycle changes until G0/G1/G80, per p.232; two-M-codes-in-a-block
+  warns at CYCLE START (p.322 — runs anyway, grbl allows it); Setting 9 is
+  persisted and re-commanded at connect, its power-up half. G52 gets an
+  honest note (a stateless transform cannot express a delta shift).
+- **Bench**: G43.2 additive TLO verified (−25.4 + −5 → −30.400); M6 always
+  suspends into the Tool state on this build awaiting CYCLE START ($341=1
+  needs a homed machine → error:46 on this bench); and the **"error latch"
+  is resolved** — grblHAL's designed post-error sync hold at compat level 0,
+  acknowledged by an empty line or $ command (the sender already complies;
+  `grblhal-clearcore/docs/error-latch-repro.md` has the full story, and
+  g28-false-alarm.md is thereby fully explained).
+
+**Still open (biggest first):** Run-Stop-Jog-Continue; the MISSING backlog
+(G70-72 bolt patterns, M48 pre-flight, M76/M77, instructor-lockout settings
+group, timers pane Remaining/M30 #2, beacon states); Web Serial bench test
+(the ClearCore USB is plugged in — needs a human click on the port picker);
+one foreground glance at the wheel-jog and run-screen renders (throttled-tab
+blocked); whether to send upstream a DOCS note about the compat-0 post-error
+sync hold (owner's call). $341 manual tool-change modes stay untestable until
+limit switches exist. Deliberate sim divergence, kept: the sim does not
+replicate the post-error sync hold — the sender always syncs, and a held
+parser would teach nothing.
 
 ---
 

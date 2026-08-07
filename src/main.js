@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, wireLine, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, wireLine, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, haasNote, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, helpTotal } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
@@ -162,7 +162,11 @@ function press (id) {
   // The SETTING page's one real setting. A HAAS keeps inch/metric in Setting 9;
   // grbl has no such store, so changing it means commanding the modal pair.
   if (s.activePane === 'setting' && (id === 'left' || id === 'right')) {
-    return send(s.units === 'IN' ? 'G21' : 'G20')
+    // Setting 9 on a HAAS is a stored setting that also picks the power-up
+    // default — so the choice persists and connect() re-commands it.
+    const unit = s.units === 'IN' ? 'MM' : 'IN'
+    store.set(SETTING9, unit)
+    return send(unit === 'IN' ? 'G20' : 'G21')
   }
 
   // TOOL OFFSET: one column, so the cursor only walks rows.
@@ -615,6 +619,7 @@ function editKey (id) {
 // ------------------------------------------------------------------ tool table
 
 const TOOLS = 'haassender.tools'
+const SETTING9 = 'haassender.setting9'
 
 /** Returns false when the table could not be persisted; the caller must say so. */
 const saveTools = () => store.set(TOOLS, s.tools)
@@ -1190,6 +1195,12 @@ function cycleStart () {
   const unmeasured = toolsUsed(s.program.lines).filter(n => n > 0 && s.tools[n] === undefined)
   if (unmeasured.length) {
     s.message = `no tool length measured for ${unmeasured.map(n => 'H' + n).join(', ')} — running with no offset`
+  } else {
+    // Manual p.322: "Only one M-code is allowed per line of code." grbl runs
+    // such a block happily, which teaches a habit a real HAAS rejects — warn,
+    // run anyway. The unmeasured-tool warning outranks this one.
+    const multiM = s.program.lines.find(l => (stripComments(l.text).match(/\bM\d/gi) || []).length > 1)
+    if (multiM) s.message = `line ${multiM.n}: two M-codes in one block — a real HAAS allows one per line (runs here anyway)`
   }
 
   s.alarm = null
@@ -1240,12 +1251,16 @@ function onLine (line) {
   }
   if (line.startsWith('error:')) {
     const n = Number(line.slice(6))
-    s.message = `error ${n} — ${describeError(n)}`
+    // The HAAS-aware half: not just "error 20" but what the code the student
+    // wrote MEANS on a HAAS and what to do here instead.
+    const last = s.mdi[s.mdi.length - 1]
+    const note = haasNote(last?.text)
+    const full = describeError(n) + (note ? ` ${note}` : '')
+    s.message = `error ${n} — ${full}`
     // Pin it to the MDI block that caused it. A student typing blocks by hand
     // learns far more from "G1 X10 — needs a feed rate" than from the code alone.
-    const last = s.mdi[s.mdi.length - 1]
-    if (last && !last.error) last.error = `error ${n}: ${describeError(n)}`
-    logAlarm('ERROR', n, describeError(n), null)
+    if (last && !last.error) last.error = `error ${n}: ${full}`
+    logAlarm('ERROR', n, full, null)
     // A job the board is running off its own card has stopped. Nothing here is
     // streaming it, so nothing else would ever notice — and the cycle timer would
     // count on for a program that is no longer running.
@@ -1406,6 +1421,10 @@ function applyStatus (st) {
     if (!s.optSynced && !s.job) {
       s.optSynced = true
       if (!pins.includes('T')) link?.send('$O\n')
+      // Setting 9's power-up half: the machine boots G21; if the stored
+      // dimensioning says INCH, command it now, once per connection.
+      const unit9 = store.get(SETTING9, null)
+      if (unit9 === 'IN') { link?.send('G20\n'); link?.send('$G\n') }
     }
   }
 

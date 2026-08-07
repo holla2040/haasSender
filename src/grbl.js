@@ -207,6 +207,55 @@ export const describeError = (n) => ERRORS[n] || `Unrecognized error ${n}.`
 export const describeAlarm = (n) => ALARMS[n] || `Unrecognized alarm ${n}.`
 
 /**
+ * What the STUDENT'S code meant, when this stack rejects it. "error 20" is
+ * true and teaches nothing; "G12 is Circular Pocket Milling on a HAAS — mill
+ * it with G2/G3" is what a student at a real control would eventually work
+ * out. One note per family, first match wins, and only codes the 2014 manual
+ * documents — this table must never invent a HAAS behaviour.
+ */
+const HAAS_NOTES = [
+  [/\bG0*9\b(?![.\d])/i, 'G09 exact stop: this control always stops between blocks, so the code does not exist here.'],
+  [/\bG0*1[23]\b(?![.\d])/i, 'G12/G13 is circular pocket milling on a HAAS. No pocket cycle here — mill it with G2/G3 arcs.'],
+  [/\bG4[12]\b(?![.\d])/i, 'G41/G42 cutter compensation does not exist on this control — post the compensated path from CAM.'],
+  [/\bG47\b(?![.\d])/i, 'G47 is text engraving on a HAAS. Engrave from CAM toolpaths here.'],
+  [/\bG52\b(?![.\d])/i, 'G52 is a temporary work shift on a HAAS. Use G92, or a spare work offset.'],
+  [/\bG60\b(?![.\d])/i, 'G60 uni-directional positioning is a HAAS backlash trick — servo axes here do not need it.'],
+  [/\bG7[012]\b(?![.\d])/i, 'G70/G71/G72 are HAAS bolt-hole patterns. Not built here yet — program the holes individually.'],
+  [/\bG74\b(?![.\d])/i, 'G74 reverse tapping needs a spindle encoder this machine does not have.'],
+  [/\bG7[67]\b(?![.\d])/i, 'G76/G77 fine boring cycles are not supported here — use G85/G86.'],
+  [/\bG84\b(?![.\d])/i, 'G84 rigid tapping needs a spindle encoder this machine does not have.'],
+  [/\bG8[78]\b(?![.\d])/i, 'G87/G88 bore with manual retract — an operator-retract cycle this control does not run.'],
+  [/\bG10[01]\b(?![.\d])/i, 'G100/G101 mirror image does not exist here — mirror the part in CAM.'],
+  [/\bG103\b(?![.\d])/i, 'G103 block lookahead limiting does not exist here.'],
+  [/\bG1(1[3-9]|2\d)\b(?![.\d])/i, 'G113-G129: only three extra work systems exist here — G110, G111 and G112.'],
+  [/\bG136\b(?![.\d])/i, 'G136 work-offset probing needs a probe system this machine does not have.'],
+  [/\bG14[13]\b(?![.\d])/i, 'G141/G143 are 5-axis compensation — this is a 3+1 axis machine.'],
+  [/\bG150\b(?![.\d])/i, 'G150 general pocket milling is not supported — mill the pocket with G1/G2/G3.'],
+  [/\bG154\s*P\d+/i, 'G154 P4-P99: only P1-P3 exist here, as G59.1-G59.3.'],
+  [/\bG1[5-8]\d\b(?![.\d])/i, 'G153-G188 are 5-axis or option codes this machine does not have.'],
+  [/\bM0*1[0-3]\b/i, 'M10-M13 are rotary brake commands — no brake fitted.'],
+  [/\bM0*1[78]\b/i, 'M17/M18 are pallet-changer commands — no pallet changer fitted.'],
+  [/\bM0*19\b/i, 'M19 orient spindle needs a spindle encoder — nothing here can hold an angle.'],
+  [/\bM0*2[1-8]\b/i, 'M21-M28 fire user relays with M-Fin — no such relays are wired.'],
+  [/\bM0*3[13]\b/i, 'M31/M33 drive the chip conveyor — none fitted.'],
+  [/\bM0*3[45]\b/i, 'M34/M35 move the P-Cool spigot — no programmable coolant fitted.'],
+  [/\bM0*39\b/i, 'M39 rotates the tool turret — no tool changer fitted.'],
+  [/\bM0*4[12]\b/i, 'M41/M42 are spindle gear overrides — this spindle has no gearbox.'],
+  [/\bM0*4[89]\b|\bM0*5\d\b/i, 'M48-M59 are program-check, pallet and relay codes this machine does not have.'],
+  [/\bM0*6[1-9]\b/i, 'M61-M69 user I/O: every output pin on this controller is already spoken for.'],
+  [/\bM0*7[589]\b/i, 'M75/M78/M79 are probing codes — no probe system fitted.'],
+  [/\bM0*8[0-9]\b/i, 'M80-M89 drive doors, air guns, clamps and through-spindle coolant — none fitted.'],
+  [/\bM0*9[56]\b/i, 'M95 sleep / M96 input-jump are not supported on this control.'],
+  [/\bM109\b/i, 'M109 interactive input needs the macro system — not built here.']
+]
+
+/** The HAAS-aware half of an error message, or null when the line has no story. */
+export function haasNote (text) {
+  for (const [re, note] of HAAS_NOTES) if (re.test(text ?? '')) return note
+  return null
+}
+
+/**
  * What actually clears each alarm, which is the half a student needs and the half
  * the grbl tables never print.
  *
@@ -347,7 +396,9 @@ export class Streamer {
       this.retire()
       // A rejected line means the rest of the program is no longer trustworthy —
       // stop rather than plough on into a part with a bad block already skipped.
-      this.error = { code, line: this.acked, text: describeError(code) }
+      // retire() ran, so the failed wire line is the one just retired.
+      const note = haasNote(this.lines[this.acked - 1])
+      this.error = { code, line: this.acked, text: describeError(code) + (note ? ` ${note}` : '') }
       this.running = false
       return true
     }
@@ -429,11 +480,20 @@ export function wireLine (t, { tools = {}, caps = {} } = {}) {
   t = t.replace(/\bG31\b(?![.\d])/i, 'G38.2')                    // probe
   t = t.replace(/\bM0*16\b/i, 'M6')                              // M16 = M06 synonym
   t = t.replace(/\bG154\s*P0*([1-3])\b/i, (_, p) => `G59.${p}`)  // P4+ passes through; the board's error is the honest answer
+  t = t.replace(/\bG11([0-2])\b(?![.\d])/i, (_, d) => `G59.${Number(d) + 1}`)  // HAAS #7-#9 = the three extra systems; G113+ errors honestly
 
-  // HAAS G86 (Bore and Stop) has no dwell word; grblHAL's G86 requires P on a
-  // cycle change (it shares G82's validation — gcode.c:3382). P0 is the HAAS
-  // meaning: stop and retract with no dwell. Bench-verified.
-  if (/\bG0*86\b/i.test(t) && !/\bP[\d.]/i.test(t)) t = t.replace(/\bG0*86\b/i, 'G86 P0')
+  // HAAS G44 (tool length MINUS) has no grblHAL form in any mode — it becomes
+  // the dynamic offset with the sign flipped, split out like the G43 rewrite.
+  if (/\bG44\b(?![.\d])/i.test(t)) {
+    const h = /\bH0*(\d+)\b/i.exec(t)
+    out.push(`G43.1 Z${(-Number(tools[h ? Number(h[1]) : 0] ?? 0)).toFixed(4)}`)
+    t = t.replace(/\bG44\b(?![.\d])/i, ' ').replace(/\bH0*\d+\b/i, ' ')
+  }
+
+  // A P-less G82/G86/G89 is legal HAAS (dwell defaults to none) but grblHAL
+  // requires P on a cycle change (shared validation, gcode.c:3382) — P0 says
+  // what the HAAS block meant. Bench-verified on G86.
+  t = t.replace(/\bG0*(8[269])\b(?![.\d])/i, (m, c) => /\bP[\d.]/i.test(t) ? m : `G${c} P0`)
 
   // HAAS `G51 P<f>` (uniform scale, no centre) → the board's MACH3 form, where
   // the AXIS WORDS are the factors (bench-verified: G51 X2 doubled a G0 X10).
@@ -506,6 +566,11 @@ export function wireProgram (lines, {
   let expanded = 0
   const CAP = 20000        // spliced blocks — a runaway L count stops here, loudly
 
+  // HAAS keeps a canned-cycle P sticky "unless canceled (G00, G01, G80 or
+  // RESET)" — manual p.232 — while grblHAL wants a fresh P on every change to
+  // G82/G86/G89. Carrying it here makes the board behave like the manual.
+  let stickyP = null
+
   // Walk blocks from `start`; inside a sub, M99 returns. `rowOverride` pins the
   // highlight to the calling block when the spliced lines are another program's.
   const emitFrom = (list, start, depth, rowOverride, inSub) => {
@@ -559,6 +624,12 @@ export function wireProgram (lines, {
         }
         continue                                    // the call itself sends nothing
       }
+
+      if (/\bG0*(73|8[1-9])\b(?![.\d])/i.test(t)) {
+        const p = /\bP([\d.]+)/i.exec(t)
+        if (p) stickyP = p[1]
+        else if (stickyP !== null) t = t.replace(/\bG0*(8[269])\b(?![.\d])/i, (_, c) => `G${c} P${stickyP}`)
+      } else if (/\bG0*[01]\b(?![.\d])|\bG80\b(?![.\d])/i.test(t)) stickyP = null
 
       for (const out of wireLine(t, { tools, caps })) push(slashed ? '/' + out : out, rowOverride ?? i)
 
