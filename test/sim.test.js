@@ -123,6 +123,33 @@ test('$# reports nine coordinate systems, matching the real board', () => {
   assert.ok(kinds.includes('PRB'))
 })
 
+test('a settings write is remembered, and $$ is the only way to see it', () => {
+  const { m, out, write } = bench({ maxTravel: [500, 400, 300, 360] })
+  write('$30=5000\n$130=250\n')
+  // Bare oks, no echo — which is exactly why the client has to re-read $$.
+  assert.deepEqual(out, ['ok', 'ok'])
+
+  out.length = 0
+  write('$$\n')
+  assert.ok(out.includes('$30=5000'), `$$ still reports the old $30: ${out}`)
+  assert.ok(out.includes('$130=250'), `$$ still reports the old $130: ${out}`)
+
+  assert.equal(m.maxTravel[0], 250)
+
+  // Junk must not reach the envelope. NaN there makes `Math.abs(v) > bound` false
+  // for every v, silently switching the axis's soft limit off for good. This has
+  // to be checked BEFORE the alarm below: exec() locks out everything but $X/$H
+  // once the machine is in alarm, so a write tried afterwards never arrives and
+  // the assertion would pass without proving anything.
+  write('$130=abc\n')
+  assert.equal(m.maxTravel[0], 250, 'a garbage $130 overwrote the soft limit')
+
+  // $130 is the soft-limit envelope, not just a number $$ prints back.
+  out.length = 0
+  write('G21 G90\nG1 X300 F600\n')
+  assert.ok(out.some(l => l.startsWith('ALARM')), `X300 is past the new limit: ${out}`)
+})
+
 test('output is never delivered on the caller stack', () => {
   // The regression that blew the stack: a synchronous ok let pump() re-enter itself
   // once per line. A real controller answers over a wire and never can.

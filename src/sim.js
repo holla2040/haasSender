@@ -40,6 +40,15 @@ export class VirtualGrbl {
     // Survives soft reset, like the board: the tool table is NVS-backed and the
     // $B/$S/$O switches are sys flags a 0x18 does not clear.
     this.tools = new Map()              // tool id -> { z, r }
+    // The handful of `$$` settings the PARAMETER page and the sender actually
+    // read. $130-$133 are NOT here: they are `maxTravel`, which the soft-limit
+    // check already owns, and two copies of the envelope would drift apart.
+    // ponytail: stored, not obeyed — writing $20=0 will not disable soft limits
+    // here, nor $13=1 switch reports to inches. Wire one up when a lesson needs it.
+    this.settings = {
+      13: 0, 20: 0, 21: 0, 22: 0, 30: 24000, 31: 0, 32: 0,
+      110: 5000, 111: 5000, 112: 5000, 113: 3000
+    }
     this.blockDelete = false
     this.singleBlock = false
     this.optStopDisabled = false
@@ -188,6 +197,22 @@ export class VirtualGrbl {
   system (line) {
     if (line.startsWith('$J=')) return this.jog(line.slice(3))
 
+    // A settings write, `$30=5000`. Answered with a bare `ok` and no echo, like
+    // the board — the client is expected to re-read `$$` to see what took.
+    const write = line.match(/^\$(\d+)=(.*)$/)
+    if (write) {
+      const n = Number(write[1])
+      // $130-$133 ARE the soft-limit envelope, so writing one has to move it,
+      // not just change what `$$` prints. A junk value must never reach it: the
+      // limit check is `Math.abs(v) > maxTravel[i]`, and that is false for every
+      // v once the bound is NaN — `$130=abc` would quietly switch off X's soft
+      // limit for the rest of the session, which is the opposite of a safe seat.
+      const mm = Number(write[2])
+      if (n >= 130 && n <= 133) { if (Number.isFinite(mm)) this.maxTravel[n - 130] = mm }
+      else this.settings[n] = write[2].trim()
+      return this.emit('ok')
+    }
+
     switch (line) {
       case '$I':
         this.emit('[VER:1.1f.haasSender-sim:]')
@@ -224,7 +249,7 @@ export class VirtualGrbl {
         return this.emit('ok')
       }
 
-      case '$13': this.emit('$13=0'); return this.emit('ok')
+      case '$13': this.emit(`$13=${this.settings[13]}`); return this.emit('ok')
 
       // The firmware's own run switches. $B is idle-only there and here.
       case '$B':
@@ -239,10 +264,7 @@ export class VirtualGrbl {
         return this.emit('ok')
 
       case '$$':
-        // The handful the PARAMETER page and the sender actually read.
-        for (const [k, v] of [[13, 0], [20, 0], [21, 0], [22, 0],
-          [30, 24000], [31, 0], [32, 0],
-          [110, 5000], [111, 5000], [112, 5000], [113, 3000],
+        for (const [k, v] of [...Object.entries(this.settings),
           [130, this.maxTravel[0]], [131, this.maxTravel[1]],
           [132, this.maxTravel[2]], [133, this.maxTravel[3]]]) {
           this.emit(`$${k}=${v}`)

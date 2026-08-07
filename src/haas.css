@@ -17,7 +17,14 @@
   --reset-lo:     #d55415;
   --reset-edge:   #61090b;
   --yellow:       #ffd200;
-  --yellow-deep:  #f9af15;
+  /* The artwork prints the shifted legends in #f9af15, and that value is a trap
+     on a screen: its relative luminance is ~0.51 and the key face #bdbcbc is
+     ~0.51 too, so the glyph carried NO brightness edge — 1.0:1, readable only by
+     hue, which at this size is not readable at all. Deepened deliberately. There
+     is no bright yellow that escapes this: bright yellow IS high luminance, and
+     so is a light grey key, so any yellow that separates from the face is a dark
+     one. Outlining it instead was tried and clogs the counters at 9px. */
+  --yellow-deep:  #8a5400;
 
   /* the classic screen */
   --screen-bg:    #0d3b1e;
@@ -280,9 +287,23 @@ body {
 /* the shifted character printed in yellow above the legend */
 .key .sup {
   position: absolute; top: calc(var(--u) * .18); left: calc(var(--u) * .38);
-  font-size: calc(var(--u) * .8); color: var(--yellow-deep);
-  text-shadow: 0 1px 0 rgba(0,0,0,.25);
+  font-size: calc(var(--u) * .8);
 }
+/* The number pad's shifted characters run half again bigger. They are the ones an
+   operator actually hunts for — & @ : % $ ! * ' ? + = # are the whole punctuation
+   set for typing a program — whereas the three in the alpha block sit beside keys
+   whose own legend already says what they are. */
+.grp-numeric .sup { font-size: calc(var(--u) * 1.2); }
+
+/* The yellow legends — the shifted characters and the SHIFT key itself. The
+   contrast comes from the fill (see --yellow-deep), so no shadow: every outline
+   tried here ate the counters of 9px letterforms and read darker than the glyph. */
+.key .sup, .key.shift { color: var(--yellow-deep); }
+
+/* SHIFT sits in the alpha block, so it is sized off the letters beside it —
+   three-quarters of their 1.5, because a five-letter word set as big as a single
+   A crowds its key. */
+.key.shift { font-size: calc(var(--u) * 1.125); }
 
 .key.cyan {
   background: linear-gradient(180deg, #9adcf2 0%, #56c0e4 40%, #29a8d6 74%, #0f8ec0 100%);
@@ -296,7 +317,6 @@ body {
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.5), 0 0 0 calc(var(--u)*.22) var(--reset-edge),
               0 calc(var(--u) * .16) 0 #4d0607, 0 calc(var(--u) * .3) calc(var(--u) * .35) rgba(0,0,0,.45);
 }
-.key.shift { color: var(--yellow-deep); }
 
 /* Mode keys carry a notched left edge on the real panel, which is how an operator
    picks them out of the block at a glance — see F2.26. */

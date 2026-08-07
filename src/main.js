@@ -1175,6 +1175,13 @@ function send (line) {
   if (s.job) { s.message = 'not while a program is running'; return invalidate() }
 
   link.send(line + '\n')
+  // A settings write answers with a bare `ok`, never an echo — so nothing would
+  // ever tell the PARAMETER page that `$30=5000` happened, and it would go on
+  // showing the old number until the operator re-read `$$` by hand. Re-read here
+  // for the same reason `writeOffset` re-reads `$#`: the machine is the record,
+  // and a write the board REJECTED must not leave a changed value on screen.
+  // This is also what keeps `$13` honest, which decides what `MPos:` means.
+  if (/^\$\d+=/.test(line)) link.send('$$\n')
   // Ask what that did to the modal state rather than assume. Units, work offset
   // and spindle mode all live in `$G`, and a control that displays the unit it
   // last *requested* is wrong the moment a block changes it.
