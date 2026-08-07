@@ -92,15 +92,22 @@ function turnDial (e, jogWheel) {
 }
 
 /* A stand-in for the roundel badge. Deliberately NOT a copy of the HAAS mark —
-   see the note in README about reproducing a trademark on a lookalike. */
+   see the note in README about reproducing a trademark on a lookalike.
+
+   It links to the Mini Mill EDU, which is the machine this replica is aimed at:
+   the small VMC a school shop actually owns, running the control the keypad below
+   is copied from. A student who has only ever seen this in a browser should be one
+   click from the thing it stands in for. The svg carries the aria-hidden the
+   badge used to — the link needs a name, and a decorative glyph cannot be it. */
 const badge = html`
-  <div class="logo" aria-hidden="true">
-    <svg viewBox="0 0 100 100">
+  <a class="logo" href="https://www.haascnc.com/machines/vertical-mills/mini-mills/models/minimill-edu.html"
+     target="_blank" rel="noopener" aria-label="Haas Mini Mill EDU — the machine this control copies">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
       <path d="M22 72 L44 20 h14 L36 72 Z" fill="#8c1420"/>
       <path d="M50 72 L72 20 h14 L64 72 Z" fill="#8c1420"/>
       <path d="M34 50 h40 v9 h-40 Z" fill="#8c1420"/>
     </svg>
-  </div>`
+  </a>`
 
 export const pendant = (state, actions) => {
   const press = actions.press
