@@ -61,7 +61,7 @@ function positionBody (s) {
     <div class="dro big">
       <b></b>${AXES.map(a => html`<span class="dim">${a}</span>`)}
       ${droRow('OPERATOR', s.mpos.map((v, i) => v - s.operator[i]), s)}
-      ${droRow('WORK ' + s.wcs, work, s)}
+      ${droRow(`WORK (${s.wcs})`, work, s)}
       ${droRow('MACHINE', s.mpos, s)}
       ${droRow('DIST TO GO', s.dtg ?? [0, 0, 0, 0], s, s.dtg === null)}
     </div>`
@@ -301,9 +301,9 @@ its first line.</pre>`
   return html`<pre>${s.programs.slice(from, from + 10).map((p, i) => {
     const at = from + i
     return html`<div class=${at === s.listIndex ? 'cur' : ''}>${p.o}   ${
-      p.o === s.program.o ? '*' : ' '} ${p.name}</div>`
+      p.o === s.program.o ? 'A' : ' '} ${p.name}</div>`
   })}
-<span class="dim">* is selected. SELECT PROGRAM loads, ERASE PROGRAM removes.</span></pre>`
+<span class="dim">A is the active program. SELECT PROGRAM loads, ERASE PROGRAM removes.</span></pre>`
 }
 
 const MAIN_TITLE = {
@@ -353,14 +353,16 @@ const HELP = [
   ['', `${TODO_KEYS} are simply not built yet. Press either and it says`],
   ['', 'which of the two it is.'],
   ['', ''],
-  ['Tool offsets', 'This control owns the tool table; the machine has'],
-  ['', 'none at all. G43 H&#8202;n is sent as G43.1 Z<length>, as its'],
-  ['', 'own block, and TOOL OFFSET MEASURE stores the machine'],
-  ['', 'Z where the tip is. A dash means never measured.'],
+  ['Tool offsets', 'With the haasSender firmware the machine holds a real'],
+  ['', '32-tool table and G43 H&#8202;n goes straight through. On a'],
+  ['', 'stock board this control owns the table and sends'],
+  ['', 'G43.1 Z<length> instead. TOOL OFFSET MEASURE stores'],
+  ['', 'the machine Z where the tip is. A dash: never measured.'],
   ['', ''],
-  ['Work offsets', 'G154 P1-P3 are this machine\'s G59.1-G59.3. A HAAS'],
-  ['', 'goes on to P20; those do not exist here. PART ZERO'],
-  ['', 'SET stores the machine position into the cell.'],
+  ['Work offsets', 'G154 P1-P3 are this machine\'s G59.1-G59.3. A real'],
+  ['', 'HAAS goes on to G154 P99; P4 and up do not exist here.'],
+  ['', 'PART ZERO SET stores the machine position into the'],
+  ['', 'cell and steps to the next axis, as the manual teaches.'],
   ['', ''],
   ['Inch / metric', 'Modal g-code here (G20/G21), not a stored setting,'],
   ['', 'so a program that commands either changes it too.'],
@@ -459,9 +461,12 @@ const lit = (s) => html`
 
     ${pane('main', mainTitle(s), mainBody(s), s.activePane !== 'program')}
 
+    ${/* F2.34 puts feed and the overrides in Main Spindle, not the status bar
+          or the timers pane — the data was always held, just placed wrong. */''}
     ${pane('spindle', 'MAIN SPINDLE', html`
-      <pre><span class="dim">RPM</span> ${s.stale ? '—' : Math.round(s.spindle)}
-<span class="dim">DIR</span> ${s.stale || !s.spindleDir ? '—' : s.spindleDir > 0 ? 'FWD' : 'REV'}</pre>`, false)}
+      <pre><span class="dim">RPM </span> ${s.stale ? '—' : Math.round(s.spindle)}  <span class="dim">DIR</span> ${s.stale || !s.spindleDir ? '—' : s.spindleDir > 0 ? 'FWD' : 'REV'}
+<span class="dim">FEED</span> ${s.stale ? '—' : Math.round(s.feed)}
+<span class="dim">OVR </span> ${s.stale ? '—' : `${s.ov.feed}/${s.ov.rapid}/${s.ov.spindle}`}</pre>`, false)}
 
     ${/* One line: X value  Y value  Z value  A value, top aligned. The axis
           letter sits with its own number rather than in a header row above, so
@@ -474,15 +479,14 @@ const lit = (s) => html`
       </div>`, false)}
 
     ${pane('timers', 'TIMERS', html`
-      <pre><span class="dim">THIS </span> ${clock(s.cycleMs)}
-<span class="dim">LAST </span> ${clock(s.lastCycleMs)}
-<span class="dim">PARTS</span> ${s.parts}
-<span class="dim">OVR  </span> ${s.stale ? '—' : `${s.ov.feed}/${s.ov.rapid}/${s.ov.spindle}`}</pre>`, false)}
+      <pre><span class="dim">THIS   </span> ${clock(s.cycleMs)}
+<span class="dim">LAST   </span> ${clock(s.lastCycleMs)}
+<span class="dim">M30 CNT</span> ${s.parts}</pre>`, false)}
 
     ${pane('status', null, html`
       <pre>${s.stale
         ? html`<span class="k">LINK DOWN</span>`
-        : html`${s.machineState}  ${s.link}  F${Math.round(s.feed)}`}  <span
+        : html`${s.machineState}  ${s.link}`}  <span
         class="dim">${s.units}</span>  ${s.message ?? ''}</pre>`, false)}
 
     <section class=${'pane pane-alarm' + (s.alarm ? ' on' : '')}>

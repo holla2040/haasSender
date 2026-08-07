@@ -481,13 +481,17 @@ body {
      before the program listing stops holding a full g-code block. */
   grid-template-columns: .77fr 1fr .8fr .55fr;
   grid-template-rows: auto auto 1fr auto auto auto;
+  /* Bottom band per the manual's prose: input bar "bottom, left corner"
+     (p.53), status bar "bottom, center" (p.51), alarm at the right — with the
+     icon bar a full-width band above them, not squatting in the input bar's
+     corner. */
   grid-template-areas:
     "modebar modebar modebar modebar"
     "program codes   tool    coolant"
     "program main    main    main"
     "spindle position position timers"
-    "status  status  status  alarm"
-    "icons   input   input   input";
+    "icons   icons   icons   icons"
+    "input   status  status  alarm";
 }
 
 .pane {

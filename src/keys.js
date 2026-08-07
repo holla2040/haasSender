@@ -155,7 +155,7 @@ const num = (d, sup) => k('num-' + d, d, { big: true, sup })
 export const NUMERIC = {
   id: 'numeric', columns: 3, panel: 'black',
   rows: [
-    [num('7', '&'), num('8', '@'), num('9', '°')],
+    [num('7', '&'), num('8', '@'), num('9', ':')],
     [num('4', '%'), num('5', '$'), num('6', '!')],
     [num('1', '*'), num('2', "'"), num('3', '?')],
     [k('minus', '−', { big: true, sup: '+' }), num('0', '='), k('dot', '·', { big: true, sup: '#' })],
@@ -337,7 +337,7 @@ export const UNAVAILABLE = new Map([
   // spigot does not.
   ['coolant-up', 'no programmable coolant fitted to this machine'],
   ['coolant-down', 'no programmable coolant fitted to this machine'],
-  ['aux-coolant', 'no programmable coolant fitted to this machine'],
+  ['aux-coolant', 'no through-spindle coolant (TSC) fitted to this machine'],
 
   // Spindle orientation. A grbl machine has no such thing — there is no encoder
   // and no closed loop to hold an angle, so `M19` is not a gap in this build, it

@@ -94,7 +94,7 @@ Small, no design risk, and the first one is a correctness-of-information bug.
       **Active Codes is deliberately not blanked** — it is the last modal state we
       were told, not a live reading. Revisit if that turns out to mislead.
 - [x] **Two-state key treatment.** Three states are drawn, because three are true:
-      green = works, faded = can never work (`UNAVAILABLE` in `keys.js`, 12 keys),
+      green = works, faded = can never work (`UNAVAILABLE` in `keys.js`, 13 keys),
       plain = not built yet. Faded covers RAPID 5%, the chip conveyor, the tool
       changer and the programmable coolant. The inversion this item also called for
       is now due and has its own entry under **Still open**.
@@ -348,15 +348,23 @@ The fiddliest behaviour in the project. Budget accordingly.
         board, which runs it off its own card with no sender in the loop. Nothing
         to drop, nothing to flow-control, and the only way to run a file too big to
         hold in control memory. The mode bar reads `OPERATION: DNC`.
-- [ ] **The firmware has its own BLOCK DELETE, SINGLE BLOCK and OPTION STOP.**
+- [x] **The firmware has its own BLOCK DELETE, SINGLE BLOCK and OPTION STOP.**
       `$B`, `$S` and `$O` toggle them, found in `$HELP Commands`. The three switches
       here are sender-side, on the stated reasoning that "grbl has no optional-stop
-      switch" — which is true of grbl and **wrong about grblHAL**. Ours work and are
-      verified, but the machine's are more faithful: the parser does the skipping
-      instead of this control rewriting the program, and they would apply to a job
-      the board runs off its own card, where the sender is not in the loop at all.
-      Worth switching to, and worth checking `$S` really means what SINGLE BLOCK
-      means before doing it.
+      switch" — which is true of grbl and **wrong about grblHAL**.
+      **Done for BLOCK DELETE and OPTION STOP** (fidelity branch): the keys drive
+      `$B`/`$O` (realtime 0x88 mid-job for option stop; `$B` is idle-only, no
+      realtime byte exists), the lamps follow the `Pn:` report chars (`L` block
+      delete, `T` optional-stop-DISABLE — inverted underneath), `wireProgram` no
+      longer strips `M01` or `/` blocks, and the sender syncs `$O` once at connect
+      because the firmware powers up with M1 live where a HAAS powers up with the
+      switch off. The parser now does the skipping, so both switches also govern
+      jobs run off the machine's card.
+      **SINGLE BLOCK stays sender-side deliberately**: firmware `$S` holds after
+      *every* block (`gcode.c:4624` treats each as M0) — whether that matches
+      HAAS one-block-per-CYCLE-START student-visibly is a bench judgement not yet
+      made. The sim implements `$S` for when it is.
+      DRY RUN has no firmware equivalent and stays sender-side forever.
 
 - [x] **JOG LOCK** latches a jog key into a continuous move — `$J=` for the axis's
       declared travel (`$130`+, so the move ends where the machine would have
@@ -389,7 +397,7 @@ The fiddliest behaviour in the project. Budget accordingly.
         keys is read from `UNAVAILABLE` so the page cannot drift from the keypad.
 - [x] **The key tint is inverted.** With 103 of 132 live, tinting what works would
       tint nearly the whole panel and say nothing. A working key now looks like a
-      key; only the two exceptions are marked — muted for *not yet* (17), faded
+      key; only the two exceptions are marked — muted for *not yet* (7), faded
       with dimmed legends for *never* (12). Pressing either says which it is, so
       no key on the panel is silent about itself any more.
 

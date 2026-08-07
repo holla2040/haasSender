@@ -80,9 +80,11 @@ export function parseFeedback (line) {
  * which one we have merely sent.
  */
 export function parseOpt (optValue) {
-  const [, planner, rx, axes] = String(optValue).split(',')
+  const [, planner, rx, axes, tools] = String(optValue).split(',')
   const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null)
-  return { planner: num(planner), rx: num(rx), axes: num(axes) }
+  // The trailing field is the firmware's tool table size — 0 on stock builds,
+  // 32 on the haasSender branch. It is how the sender knows G43 H is native.
+  return { planner: num(planner), rx: num(rx), axes: num(axes), tools: num(tools) }
 }
 
 /** Pull just the RX buffer size out of an `[OPT:…]` value. */
@@ -402,57 +404,167 @@ export function prepare (text) {
 export const stripComments = (text) =>
   text.replace(/\([^)]*\)/g, ' ').replace(/;.*$/, ' ').replace(/\s{2,}/g, ' ').trim()
 
+/** A program that cannot be put on the wire faithfully. cycleStart shows the message. */
+export class WireError extends Error {}
+
+/**
+ * The per-line dialect translation between what a HAAS program says and what
+ * this firmware speaks — shared by CYCLE START and MDI, because a typed block
+ * and a program block must reach the machine in the same language. Returns the
+ * wire lines one source block becomes (usually one; a G43 H split makes two).
+ */
+export function wireLine (t, { tools = {}, caps = {} } = {}) {
+  const out = []
+
+  // HAAS G04: an integer P is milliseconds, a decimal P is seconds — manual
+  // p.245: "G04 P10. is a dwell of 10 seconds; G04 P10 is 10 milliseconds".
+  // grbl's P is always seconds, so a half-second HAAS dwell would otherwise
+  // run for eight minutes. Only G04's P converts: canned-cycle P is stated in
+  // seconds by the manual and every example writes it with a decimal.
+  if (/\bG0*4\b(?![.\d])/i.test(t)) {
+    t = t.replace(/\bP(\d+)(?![.\d])/i, (_, ms) => `P${Number(ms) / 1000}`)
+  }
+
+  // HAAS spellings of things grbl spells differently.
+  t = t.replace(/\bG31\b(?![.\d])/i, 'G38.2')                    // probe
+  t = t.replace(/\bM0*16\b/i, 'M6')                              // M16 = M06 synonym
+  t = t.replace(/\bG154\s*P0*([1-3])\b/i, (_, p) => `G59.${p}`)  // P4+ passes through; the board's error is the honest answer
+
+  // HAAS `G51 P<f>` (uniform scale, no centre) → the board's MACH3 form, where
+  // the AXIS WORDS are the factors (bench-verified: G51 X2 doubled a G0 X10).
+  // A G51 that names a centre point passes through untouched and the board's
+  // error:36 answers it — scaling about an arbitrary centre does not exist here.
+  if (/\bG0*51\b/i.test(t) && !/\bG0*51\b[^;]*\b[XYZA]/i.test(t)) {
+    t = t.replace(/\bG0*51\s*P([\d.]+)/i, (_, f) => `G51 X${f} Y${f} Z${f}`)
+  }
+
+  // `G43 H<n>` on a firmware with no tool table becomes grbl's dynamic form,
+  // as its own block — folded in, two Z words share a line and grbl answers
+  // error:25. With a native tool table (the haasSender branch firmware,
+  // detected from [OPT:]'s tool count), G43 H passes through untouched.
+  if (!caps.toolTable && /\bG43\b(?![.\d])/i.test(t)) {
+    const h = /\bH0*(\d+)\b/i.exec(t)
+    out.push(`G43.1 Z${Number(tools[h ? Number(h[1]) : 0] ?? 0).toFixed(4)}`)
+    t = t.replace(/\bG43\b(?![.\d])/i, ' ').replace(/\bH0*\d+\b/i, ' ')
+  }
+
+  t = t.replace(/\s{2,}/g, ' ').trim()
+  if (t) out.push(t)
+  return out
+}
+
 /**
  * Turn a prepared program into what actually goes on the wire, given the front
  * panel's run switches. Returns the wire lines and, alongside, the index in
  * `lines` each one came from — because a switch that removes a block would
  * otherwise slide the running-block highlight off the row it belongs to.
  *
- * Every switch here is owned by the sender rather than the controller:
+ * With `caps.runSwitches` (grblHAL, i.e. every current transport) BLOCK DELETE
+ * and OPTION STOP belong to the firmware — `/` blocks and `M01` go through on
+ * the wire and `$B`/`$O` decide there, which also covers jobs the board runs
+ * off its own card. The stripping path below survives for a classic-grbl
+ * serial board, the day Web Serial is bench-tested.
  *
- * - **BLOCK DELETE** skips `/` blocks. Off means the block runs, without its
- *   slash — that is a machine's power-up state, not a convenience.
- * - **OPTION STOP** decides whether `M01` is a stop or a no-op. grbl has no
- *   optional-stop switch of its own, so with the switch off the word is removed
- *   before sending; leaving it in and hoping the firmware ignores it would make
- *   the behaviour depend on which build is on the bench.
- * - **DRY RUN** suppresses spindle start and coolant on — `M3`/`M4`, `M7`/`M8`.
- *   `M5` and `M9` are left alone: a switch meant to make the machine safer must
- *   never strip the commands that turn things *off*.
+ * DRY RUN is the sender's forever: it suppresses spindle start and coolant on
+ * (`M3`/`M4`, `M7`/`M8`), never `M5`/`M9` — a switch meant to make the machine
+ * safer must not strip the commands that turn things off.
+ *
+ * Subprograms are expanded here, because a streamed job is a line stream with
+ * no file to jump around in: M97 splices the N-block range of this program,
+ * M98/G65 inline a program fetched from control memory via `getProgram`.
+ * Faults throw WireError with the reason a student needs.
  */
-export function wireProgram (lines, { blockDelete = false, optionStop = false, dryRun = false, tools = {} } = {}) {
+export function wireProgram (lines, {
+  blockDelete = false, optionStop = false, dryRun = false, dryRunFeed = 0,
+  tools = {}, caps = {}, getProgram = null
+} = {}) {
   const wire = []
   const rows = []
   const push = (text, row) => { wire.push(text); rows.push(row) }
+  const err = (msg) => { throw new WireError(msg) }
 
-  lines.forEach((l, i) => {
-    if (l.del && blockDelete) return
-    let t = stripComments(l.del ? l.text.slice(1) : l.text)
-
-    // The program's own O-number is a name, not a command: a grbl parser answers
-    // a bare `O1234` with error:20.
-    if (!t || /^O\s*\d{1,5}$/i.test(t)) return
-
-    if (dryRun) t = t.replace(/\bM0*[3478]\b/gi, ' ').trim()
-    if (!optionStop) t = t.replace(/\bM0*1\b/gi, ' ').trim()
-
-    // `G43 H<n>` — apply tool n's length offset. This board has no tool table at
-    // all (N_TOOLS 0 in its firmware), so the sender owns one and turns the
-    // request into grbl's dynamic form.
-    //
-    // It has to become its own block. A HAAS writes `G43 H1 Z50.` on one line
-    // meaning "apply the offset, then rapid to Z50"; folding the offset into that
-    // same line would put two Z words in one block and grbl answers error:25.
-    if (/\bG43\b(?![.\d])/i.test(t)) {
-      const h = /\bH0*(\d+)\b/i.exec(t)
-      push(`G43.1 Z${Number(tools[h ? Number(h[1]) : 0] ?? 0).toFixed(4)}`, i)
-      t = t.replace(/\bG43\b(?![.\d])/i, ' ').replace(/\bH0*\d+\b/i, ' ').trim()
+  // First-word N-labels, per program, for M97 local calls.
+  const nIndexes = new Map()
+  const nIndex = (list) => {
+    let ix = nIndexes.get(list)
+    if (!ix) {
+      ix = new Map()
+      list.forEach((l, i) => {
+        const m = /^\/?\s*N0*(\d+)\b/i.exec(l.text.trim())
+        if (m && !ix.has(Number(m[1]))) ix.set(Number(m[1]), i)
+      })
+      nIndexes.set(list, ix)
     }
+    return ix
+  }
 
-    t = t.replace(/\s{2,}/g, ' ').trim()
-    if (!t) return
-    push(t, i)
-  })
+  let expanded = 0
+  const CAP = 20000        // spliced blocks — a runaway L count stops here, loudly
+
+  // Walk blocks from `start`; inside a sub, M99 returns. `rowOverride` pins the
+  // highlight to the calling block when the spliced lines are another program's.
+  const emitFrom = (list, start, depth, rowOverride, inSub) => {
+    for (let i = start; i < list.length; i++) {
+      const l = list[i]
+      if (++expanded > CAP) err('program too large after subprogram expansion')
+
+      if (l.del && blockDelete && !caps.runSwitches) continue
+      // Under native switches the slash stays on the wire for $B to judge —
+      // but it comes off before the transforms and back onto EVERY line the
+      // block becomes, or a block-deleted G43 H split would apply its offset
+      // from an unslashed G43.1 line while $B skipped the rest.
+      const slashed = caps.runSwitches && l.del
+      let t = stripComments(l.del ? l.text.slice(1) : l.text)
+      if (!t || /^O\s*\d{1,5}$/i.test(t)) continue
+
+      if (dryRun) {
+        t = t.replace(/\bM0*[3478]\b/gi, ' ').trim()
+        // §3.13: dry-run feeds run at the jog-speed-button rate — the bottom
+        // legend of the increment keys. Every F is substituted so the program's
+        // own feeds never apply. Rapids stay rapids (divergence, said in HELP):
+        // grbl has no rapid-rate word, only the 25/50/100% override.
+        if (dryRunFeed > 0) t = t.replace(/\bF[\d.]+/gi, `F${dryRunFeed}`).trim()
+      }
+      if (!optionStop && !caps.runSwitches) t = t.replace(/\bM0*1\b/gi, ' ').trim()
+      if (!t) continue
+
+      if (/\bM0*99\b/i.test(t)) {
+        if (inSub) return
+        err('M99 loops the program forever — run it from the machine card (DNC) instead of streaming')
+      }
+
+      const sub = /\b(?:M0*9([78])|G0*65)\b/i.exec(t)
+      if (sub) {
+        if (depth >= 4) err('subprograms nested deeper than 4 levels')
+        const p = /\bP0*(\d+)/i.exec(t)
+        if (!p) err(`${sub[0].toUpperCase()} without a P word`)
+        const reps = Number((/\bL0*(\d+)/i.exec(t) || [])[1] ?? 1)
+        if (sub[1] === '7') {                       // M97: N-label in this program
+          const at = nIndex(list).get(Number(p[1]))
+          if (at === undefined) err(`M97 P${p[1]}: no block N${p[1]} in this program`)
+          for (let k = 0; k < reps; k++) emitFrom(list, at, depth + 1, rowOverride, true)
+        } else {                                    // M98 / G65: program from memory
+          if (/G0*65/i.test(sub[0])) {
+            const rest = t.replace(/\bG0*65\b/i, '').replace(/\bP0*\d+/i, '').replace(/\bL0*\d+/i, '').trim()
+            if (rest) err('G65 macro arguments (#variables) are not supported when streaming — run it from the machine card')
+          }
+          const prog = getProgram?.(Number(p[1]))
+          if (!prog) err(`P${p[1]}: program O${String(p[1]).padStart(5, '0')} is not in memory`)
+          for (let k = 0; k < reps; k++) emitFrom(prog, 0, depth + 1, rowOverride ?? i, true)
+        }
+        continue                                    // the call itself sends nothing
+      }
+
+      for (const out of wireLine(t, { tools, caps })) push(slashed ? '/' + out : out, rowOverride ?? i)
+
+      // M30/M02 end the program: nothing after them streams — which is also
+      // what hides the M97 subprogram bodies the manual places after the M30.
+      if (!inSub && /\bM0*(2|30)\b/i.test(t)) return
+    }
+    if (inSub) err('subprogram ran off the end of the program without an M99')
+  }
+
+  emitFrom(lines, 0, 0, null, false)
   return { wire, rows }
 }
 

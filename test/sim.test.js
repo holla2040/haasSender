@@ -199,3 +199,102 @@ test('a whole program streams to the simulator and the machine ends where it sho
   assert.equal(m.state, 'Idle')
   assert.deepEqual(m.mpos.map(v => Number(v.toFixed(3))), [0, 0, 5, 0])
 })
+
+// ------------------------------------------------- fidelity-report regressions
+
+test('a mid-line G91 no longer doubles the axes the block does not mention', () => {
+  const { m, write, run } = bench()
+  write('G0 X3 Y7\n'); run(5)
+  write('G91 G0 X5\n'); run(5)                   // was [8,14] — C4 in the report
+  assert.deepEqual(m.mpos.slice(0, 2), [8, 7])
+  write('G90 G28 G91 Z0\n'); run(5)              // the manual's program ending
+  assert.equal(m.mpos[0], 0)
+})
+
+test('offset and TLO writes write, they do not move the machine', () => {
+  const { m, write, run } = bench()
+  write('G10 L2 P1 X-250\nG43.1 Z-50\n'); run(3)
+  assert.equal(m.mpos[0], 0)
+  assert.equal(m.offsets[0][0], -250)
+  assert.equal(m.tloZ, -50)
+})
+
+test('the native tool table: G10 L1 feeds G43 H, and the offset moves Z', () => {
+  const { m, write, run } = bench()
+  write('G10 L1 P3 Z-20\nG43 H3\nG1 Z50 F600\n'); run(60)
+  assert.equal(m.tloZ, -20)
+  assert.ok(Math.abs(m.mpos[2] - 30) < 1e-6, `Z50 with TLO -20 must land at 30, got ${m.mpos[2]}`)
+})
+
+test('G81 drills and retracts; unsupported codes answer error:20, unused words error:36', () => {
+  const { m, out, write, run } = bench()
+  write('G0 Z5\n'); run(5)
+  write('G81 Z-1.5 R0.1 F600\n'); run(30)
+  assert.ok(Math.abs(m.mpos[2] - 5) < 1e-6, `G98 return to initial Z, got ${m.mpos[2]}`)
+  write('G41 D1\nM31\nG1 X5 F100 Q5\n')
+  assert.deepEqual(out.filter(l => l.startsWith('error:')), ['error:20', 'error:20', 'error:36'])
+})
+
+test('M0 and M6 hold like the machine; cycle start resumes', () => {
+  const { m, write, run } = bench()
+  write('T2 M6\nG0 X1\n'); run(2)
+  assert.equal(m.state, 'Hold')
+  assert.equal(m.tool, 2)
+  m.realtime(0x7E); run(5)
+  assert.equal(m.mpos[0], 1)
+})
+
+test('$S holds after every block; $B decides slashed blocks; Pn reports both', () => {
+  const { m, write, run } = bench()
+  write('$S\nG0 X1\nG0 X2\n'); run(10)
+  assert.equal(m.state, 'Hold')
+  assert.equal(m.mpos[0], 1)
+  m.realtime(0x7E); run(10)
+  assert.equal(m.mpos[0], 2)
+  m.realtime(0x7E); run(1)                       // clear the tail hold before $B
+  write('$S\n$B\n/G0 X9\n'); run(5)
+  assert.equal(m.mpos[0], 2)                     // skipped under $B
+  assert.match(m.statusReport(), /\|Pn:L/)
+})
+
+test('a streamed M01 holds in the firmware and CYCLE START resumes — the cutover flow', () => {
+  const { m, write, run } = bench()
+  // Option stop ON = the disable flag CLEAR, so a fresh sim already honours M01.
+  const program = ['G0 X1', 'M01', 'G0 X2']
+  const streamer = new Streamer((w) => write(w), 1024)
+  streamer.start(program)
+  run(5)
+  assert.equal(m.state, 'Hold', 'M01 must hold with option stop on')
+  assert.ok(Math.abs(m.mpos[0] - 1) < 1e-6)
+  m.realtime(0x7E); run(5)                     // CYCLE START's resume byte
+  assert.equal(m.mpos[0], 2)
+  assert.equal(m.state, 'Idle')
+  // And with the switch off ($O sets the disable flag) M01 is the firmware's no-op.
+  const b2 = bench()
+  b2.write('$O\n')
+  const s2 = new Streamer((w) => b2.write(w), 1024)
+  s2.start(program)
+  b2.run(5)
+  assert.equal(b2.m.state, 'Idle')
+  assert.equal(b2.m.mpos[0], 2)
+})
+
+test('G51 is MACH3-style like the board: axis words are factors, about work zero', () => {
+  const { m, write, run } = bench()
+  write('G51 X2\nG0 X10\n'); run(10)
+  assert.equal(m.mpos[0], 20)                    // bench-verified 2026-08-07
+  write('G50\nG0 X10\n'); run(10)
+  assert.equal(m.mpos[0], 10)
+  const b2 = bench()
+  b2.write('G51 X0 Y0 P2\n')                     // HAAS centre+P form: unused P
+  assert.equal(b2.out.filter(l => l.startsWith('error:')).pop(), 'error:36')
+})
+
+test('$# prints all 32 tool rows, zeros included, exactly like the board', () => {
+  const { out, write } = bench()
+  write('G10 L1 P3 Z-20\n$#\n')
+  const rows = out.filter(l => l.startsWith('[T:'))
+  assert.equal(rows.length, 32)
+  assert.ok(rows[2].startsWith('[T:3|0.000,0.000,-20.000'))
+  assert.ok(rows[0].startsWith('[T:1|0.000,0.000,0.000'), 'unset tools print as zero rows')
+})

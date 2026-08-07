@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, wireProgram, wireLine, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, helpTotal } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
@@ -14,17 +14,22 @@ const STATUS_IDLE_MS = 500
 const STALE_MS = 2000
 
 // Handle-jog increments. The keys are printed with both scales — ".0001 / .1" —
-// because the same key means thousandths of an inch or tenths of a millimetre
-// depending on the active unit.
+// and the manual (T2.8, printed p.39) states the metric value is the inch
+// legend ×10: ".0001 becomes 0.001mm". The second printed number is the
+// dry-run jog rate, not a metric increment — misread here once, at 100× cost.
 const INCREMENT_KEYS = ['inc-0001', 'inc-001', 'inc-01', 'inc-1']
-const INCREMENTS = { IN: [0.0001, 0.001, 0.01, 0.1], MM: [0.1, 1, 10, 100] }
+const INCREMENTS = { IN: [0.0001, 0.001, 0.01, 0.1], MM: [0.001, 0.01, 0.1, 1] }
+// The BOTTOM legend of the same keys is the dry-run feed (T2.8), in/min.
+const DRY_RUN_FEED = { IN: [0.1, 1, 10, 100], MM: [2.54, 25.4, 254, 2540] }
 const JOG_FEED = { IN: 100, MM: 2540 }
 
 const AXIS_KEYS = {
   'jog-x-plus': [0, +1], 'jog-x-minus': [0, -1],
   'jog-y-plus': [1, +1], 'jog-y-minus': [1, -1],
   'jog-z-plus': [2, +1], 'jog-z-minus': [2, -1],
-  'jog-b-plus': [3, +1], 'jog-a-plus': [3, -1]
+  // The rotary pair's PRIMARY legends: 'jog-b-plus' is printed "-A/C" and
+  // 'jog-a-plus' is printed "+A/C" (F2.26 at 400 dpi). Signs follow the print.
+  'jog-b-plus': [3, -1], 'jog-a-plus': [3, +1]
 }
 
 const REALTIME = {
@@ -58,9 +63,18 @@ const s = {
   // Control memory: the program directory, filed by O-number the way a HAAS files
   // it, and whichever one is currently selected to run.
   programs: [], listIndex: 0,
-  // The four front-panel run switches. They are the sender's, not the machine's:
-  // grbl has no optional-stop switch and no dry run, so this control owns them.
+  // The four front-panel run switches. BLOCK DELETE and OPTION STOP are the
+  // firmware's own on grblHAL ($B/$O — the parser skips, which also covers jobs
+  // run from the machine's card); their lamps follow the Pn: report. SINGLE
+  // BLOCK stays sender-side until $S's hold-after-every-block feel is bench-
+  // judged against a real HAAS; DRY RUN is the sender's, grbl has none.
   blockDelete: false, optionStop: false, dryRun: false, singleBlock: false,
+  // What the connected firmware can do, learned from $I: `toolTable` is the
+  // trailing field of [OPT:] (0 stock, 32 on the haasSender branch firmware),
+  // `expr` is EXPR in NEWOPT. `runSwitches` is true for every current transport
+  // (grblHAL and the sim); it exists so a classic-grbl serial board can fall
+  // back to sender-side stripping the day Web Serial is bench-tested.
+  caps: { runSwitches: true, toolTable: false, expr: false }, optSynced: false,
   program: { o: '', name: '', lines: [], current: 0 },
   job: null, plannerSize: 100,
   // The timers pane. `cycleStartedAt` is wall-clock rather than a tick count so a
@@ -261,10 +275,14 @@ function press (id) {
       s.latched = null             // a soft reset ends any latched jog too
       s.alarm = id === 'estop' ? 'EMERGENCY STOP (software)' : null
       s.message = id === 'estop' ? 'this is not a hardware E-stop' : ''
+      s.input = ''                 // the manual: RESET "clears input text" too
       return invalidate()
 
-    case 'spindle-cw': return send('M3 S1000')
-    case 'spindle-ccw': return send('M4 S1000')
+    // The manual: CW/CCW start the spindle at the COMMANDED speed. Overwriting
+    // the S the student just set with a hardcoded number taught a wrong lesson;
+    // the last commanded S rides in the $G modal string. 1000 only from cold.
+    case 'spindle-cw': return send(`M3 S${modalS() ?? 1000}`)
+    case 'spindle-ccw': return send(`M4 S${modalS() ?? 1000}`)
     case 'spindle-stop': return send('M5')
 
     // Both are handled above when their page is up. Anywhere else there is no cell
@@ -281,8 +299,8 @@ function press (id) {
     case 'receive': return receive()
     case 'send': return sendToCard()
 
-    case 'block-delete': return toggleSwitch('blockDelete', 'BLOCK DELETE')
-    case 'option-stop': return toggleSwitch('optionStop', 'OPTION STOP')
+    case 'block-delete': return toggleRunSwitch('blockDelete', 'BLOCK DELETE', '$B')
+    case 'option-stop': return toggleRunSwitch('optionStop', 'OPTION STOP', '$O')
     case 'dry-run': return toggleSwitch('dryRun', 'DRY RUN')
     case 'single-block': return toggleSwitch('singleBlock', 'SINGLE BLOCK')
 
@@ -325,6 +343,14 @@ function press (id) {
     case 'zero-all':
       s.message = 'homing — untested on this machine, no limit switches fitted'
       return send('$H')
+    // §3.1 step 3: POWER UP/RESTART "zero returns all axes and initializes the
+    // machine control" — it is the homing step of the power-on procedure. The
+    // machine answers honestly when homing is not configured ($22), which is
+    // this bench's state; the simulator homes.
+    case 'power-up':
+      s.mode = 'SETUP'; s.fn = 'ZERO'
+      s.message = 'POWER UP RESTART — homing (untested on this machine, no limit switches fitted)'
+      return send('$H')
     // G28 needs no limit switches: it is a move to a stored position, not a
     // homing search. Watched returning the machine from X15 Y8 Z12 to zero.
     case 'zero-home':
@@ -343,10 +369,23 @@ function press (id) {
       s.message = 'OPERATOR position zeroed'
       return invalidate()
 
-    case 'cancel':
-      if (s.pendingHomeAxis) s.message = 'cancelled'
+    case 'f1': {
+      // §3.12 p.104: F1 REPLACES the highlighted offset value where WRITE/ENTER
+      // adds to it. Only the offset pages give F1 a meaning yet; elsewhere it
+      // falls through to the honest not-built-yet message.
+      if (s.activePane !== 'offset') break
+      const f1v = s.input.trim()
+      if (!f1v) { s.message = 'type a value first — F1 replaces the cell, WRITE/ENTER adds'; return invalidate() }
+      if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(f1v)) { s.message = `"${f1v}" is not a number`; return invalidate() }
       s.input = ''
-      s.pendingHomeAxis = false
+      return offsetEntry(Number(f1v), 'replace')
+    }
+
+    case 'cancel':
+      // The manual: "Deletes the last character typed" — one character, not the
+      // buffer. An armed single-axis-home prompt still cancels whole.
+      if (s.pendingHomeAxis) { s.message = 'cancelled'; s.pendingHomeAxis = false; s.input = ''; return invalidate() }
+      s.input = s.input.slice(0, -1)
       return invalidate()
     case 'shift': s.shifted = !s.shifted; return invalidate()
     case 'enter': return commitInput()
@@ -378,7 +417,12 @@ function press (id) {
 function typedChar (id) {
   // SHIFT reaches the yellow legend above the key, and is one-shot like the real
   // one. `$` lives above the 5, which is the only way to type `$X` or `$H` here.
-  if (s.shifted && SHIFTED[id]) { s.shifted = false; return SHIFTED[id] }
+  // One-shot means one KEY, not one shifted key: a key with no yellow legend
+  // still consumes the shift, or SHIFT,A,5 would leak the latch and type "A$".
+  if (s.shifted) {
+    s.shifted = false
+    if (SHIFTED[id]) return SHIFTED[id]
+  }
   if (id.startsWith('alpha-')) return id.slice(6).toUpperCase()
   if (id.startsWith('num-')) return id.slice(4)
   if (id === 'minus') return '-'
@@ -424,6 +468,17 @@ function partZeroSet () {
   if (s.stale) { s.message = 'no position from the machine — cannot set part zero'; return invalidate() }
   const k = displayScale(s.reportUnits, s.units)
   writeOffset(s.mpos[s.offsetCol] * k)
+  // F3.11 step 12: the cursor advances so the next press loads the next axis —
+  // X, then Y (and the manual's caution: a third press loads Z). Stops at the
+  // last column rather than wrapping back onto a good X.
+  if (s.offsetCol < 3) s.offsetCol++
+}
+
+/** The last commanded S word, from the modal string — null before any S. */
+function modalS () {
+  const m = /\bS([\d.]+)/.exec(s.modal ?? '')
+  const v = m ? Number(m[1]) : 0
+  return v > 0 ? v : null
 }
 
 // --------------------------------------------------------------------- alarms
@@ -584,7 +639,22 @@ function toolOffsetMeasure () {
   if (s.stale) { s.message = 'no position from the machine — cannot measure'; return invalidate() }
   const n = s.toolRow + 1
   s.tools = { ...s.tools, [n]: s.mpos[2] }
+  writeToolToMachine(n, s.mpos[2])
   toolWritten(n, s.mpos[2] * displayScale(s.reportUnits, s.units), saveTools())
+}
+
+/**
+ * With a native tool table (haasSender branch firmware), every tool length is
+ * also written through to the machine with `G10 L1` — that is what makes
+ * `G43 H` work in a job the board runs off its own card, where this sender is
+ * not in the loop. The local table stays as the display copy and the fallback;
+ * the machine's `[T:]` rows overwrite it at `$#` so the machine stays truth.
+ * G10 L1 reads the MODAL unit, so convert like `G10 L2` does (a work zero
+ * written without this lands 25.4x out — same trap, measured, PLAN.md).
+ */
+function writeToolToMachine (n, machineZ) {
+  if (!s.caps.toolTable || !link || s.job) return
+  link.send(`G10 L1 P${n} Z${(machineZ * displayScale(s.reportUnits, s.units)).toFixed(4)}\n`)
 }
 
 // ------------------------------------------------------------- the run switches
@@ -600,6 +670,28 @@ function toggleSwitch (key, label) {
   if (key === 'singleBlock' && streamer) streamer.singleBlock = s.singleBlock
   s.message = `${label} ${s[key] ? 'ON' : 'OFF'}` +
     (s.job && key !== 'singleBlock' ? ' — takes effect at the next CYCLE START' : '')
+  return invalidate()
+}
+
+/**
+ * BLOCK DELETE and OPTION STOP are the machine's own switches on grblHAL: the
+ * key sends the `$` toggle and the LAMP FOLLOWS THE Pn: REPORT, not this press
+ * — a lamp that tracked the key rather than the machine could lie. Mid-job,
+ * OPTION STOP has a realtime byte (0x88); block delete has none, so the
+ * firmware takes `$B` only between jobs — say so instead of queueing a lie.
+ * ($O is inverted underneath: it toggles "optional stop DISABLE".)
+ */
+function toggleRunSwitch (key, label, cmd) {
+  if (!s.caps.runSwitches) return toggleSwitch(key, label)
+  if (!link) { s.message = 'not connected'; return invalidate() }
+  if (s.job) {
+    if (cmd === '$O') { link.sendRealtime(0x88); link.sendRealtime(0x3F) } else {
+      s.message = 'BLOCK DELETE — the machine takes $B only when idle; press again after the cycle'
+    }
+    return invalidate()
+  }
+  link.send(cmd + '\n')
+  link.sendRealtime(0x3F)      // so the lamp follows within a frame
   return invalidate()
 }
 
@@ -705,6 +797,13 @@ function runFromCard () {
 
 const selected = () => s.programs[s.listIndex] ?? null
 
+/** Program O<n> from control memory as prepared lines — M98/G65 expansion. */
+function programByNumber (n) {
+  const o = 'O' + String(n).padStart(5, '0')
+  const p = s.programs.find(p => p.o === o)
+  return p ? prepare(p.text) : null
+}
+
 /** Lowest unused O-number, for a file that arrived without one. */
 function nextFreeONumber () {
   const used = new Set(s.programs.map(p => p.o))
@@ -757,6 +856,19 @@ function selectProgram () {
 }
 
 function eraseProgram () {
+  // T2.10: in MDI mode this key clears the MDI page — it must never reach into
+  // the directory from there. Deleting the wrong object is the worst kind of
+  // key: it looked like it worked.
+  if (s.activePane === 'mdi') {
+    s.mdi = []
+    s.input = ''
+    s.message = 'MDI cleared'
+    return invalidate()
+  }
+  if (s.activePane !== 'list') {
+    s.message = 'ERASE PROGRAM works from LIST PROGRAM (or clears MDI in MDI mode)'
+    return invalidate()
+  }
   const p = selected()
   if (!p) { s.message = 'no program to erase'; return invalidate() }
   if (s.job) { s.message = 'cannot erase while a program is running'; return invalidate() }
@@ -796,14 +908,10 @@ function commitInput () {
       return invalidate()
     }
     s.input = ''
-    if (s.offsetPage === 'tool') {
-      const n = s.toolRow + 1
-      // Typed in the displayed unit; stored in the machine's, like everything else
-      // in this table, so `G43.1` can use it without a second conversion.
-      s.tools = { ...s.tools, [n]: Number(v) * displayScale(s.units, s.reportUnits) }
-      return toolWritten(n, Number(v), saveTools())
-    }
-    return writeOffset(Number(v))
+    // §3.12 p.104: a typed value + ENTER ADDS to the number in the cell; F1
+    // replaces it. A machinist nudges an offset by typing the correction —
+    // an ENTER that replaced would put every touch-up 100% wrong.
+    return offsetEntry(Number(v), 'add')
   }
 
   // The PARAMETER page is read-only, so WRITE/ENTER on it means "ask again". A
@@ -820,14 +928,70 @@ function commitInput () {
     return invalidate()
   }
 
+  // LIST pane: `Onnnnn` + WRITE/ENTER selects that program, or creates it when
+  // it does not exist — §3.3.2/§4.1, the way a new program is born on the
+  // pendant. Anything else typed here is not a machine command.
+  if (s.activePane === 'list') {
+    s.input = ''
+    if (!v) return invalidate()
+    const m = /^O\s*(\d{1,5})$/i.exec(v)
+    if (!m) { s.message = `type a program number, like O00010 — "${v}" is not one`; return invalidate() }
+    return selectOrCreateProgram('O' + m[1].padStart(5, '0'))
+  }
+
+  // ENTER is a machine command in exactly one place: MDI. On every other pane a
+  // HAAS commits typed text with the pane's own key (INSERT, ALTER, F1…), and a
+  // block that fell through to the machine from the EDIT page ran code the
+  // student thought they were merely typing. The buffer survives the refusal —
+  // switching to MDI and pressing ENTER again does what they meant.
+  if (s.activePane !== 'mdi') {
+    if (v) s.message = 'WRITE/ENTER sends nothing from this pane — press MDI/DNC to run a block'
+    return invalidate()
+  }
+
   s.input = ''
   if (!v) return invalidate()
 
-  if (s.activePane === 'mdi') {
-    s.mdi = [...s.mdi, { text: v }].slice(-12)
-    s.message = ''
+  s.mdi = [...s.mdi, { text: v }].slice(-12)
+  s.message = ''
+  // Through the same dialect translation a program gets — a typed `G43 H1` or
+  // `G04 P500` must not reach the machine rawer than a streamed one would.
+  for (const line of wireLine(stripComments(v), { tools: s.tools, caps: s.caps })) send(line)
+  invalidate()
+}
+
+/**
+ * One entry point for both offset tables and both entry modes — ENTER adds,
+ * F1 replaces, exactly the §3.12 pair. `value` arrives in the DISPLAY unit.
+ */
+function offsetEntry (value, mode) {
+  if (s.offsetPage === 'tool') {
+    const n = s.toolRow + 1
+    const typedMm = value * displayScale(s.units, s.reportUnits)
+    const machineZ = mode === 'add' ? (s.tools[n] ?? 0) + typedMm : typedMm
+    s.tools = { ...s.tools, [n]: machineZ }
+    writeToolToMachine(n, machineZ)
+    return toolWritten(n, machineZ * displayScale(s.reportUnits, s.units), saveTools())
   }
-  send(v)
+  const w = WCS[s.offsetRow]
+  const currentMm = (s.offsets[w.report] ?? [0, 0, 0, 0])[s.offsetCol]
+  const current = currentMm * displayScale(s.reportUnits, s.units)
+  return writeOffset(mode === 'add' ? current + value : value)
+}
+
+/** `Onnnnn` from the LIST pane: select it, or create it — §3.3.2 step 2. */
+function selectOrCreateProgram (o) {
+  const at = s.programs.findIndex(p => p.o === o)
+  if (at >= 0) {
+    s.listIndex = at
+    return selectProgram()
+  }
+  s.programs.push({ o, name: '(new)', text: o })
+  s.programs.sort((a, b) => a.o.localeCompare(b.o))
+  s.listIndex = s.programs.findIndex(p => p.o === o)
+  const persisted = saveDirectory()
+  selectProgram()
+  s.message = `${o} created` + (persisted ? '' : ', but browser storage refused — it will vanish on reload')
   invalidate()
 }
 
@@ -924,11 +1088,14 @@ function jogWheel (dir) {
   if (s.handleMode === 'feed') return override(dir > 0 ? 0x93 : 0x94)
   if (s.handleMode === 'spindle') return override(dir > 0 ? 0x9C : 0x9D)
 
-  // "Also used to scroll through program code or menu items while editing" —
-  // F2.26. So any pane that has a cursor takes the handle, and it moves that
-  // cursor rather than the machine. Routed through press() so each pane keeps
-  // owning its own cursor and this does not have to know about any of them.
-  if (hasCursor()) return press(dir > 0 ? 'up' : 'down')
+  // "This is used to jog axes (select in [HANDLE JOG] Mode); also used to
+  // scroll through program code or menu items while editing" — T2.1. The MODE
+  // decides, not the pane: in SETUP the wheel always jogs, even with the
+  // OFFSET grid up — the canonical touch-off is jog-while-watching-the-cell,
+  // and a wheel that scrolled the grid instead broke exactly that. Outside
+  // SETUP, a pane with a cursor takes the handle, routed through press() so
+  // each pane keeps owning its own cursor.
+  if (s.mode !== 'SETUP' && hasCursor()) return press(dir > 0 ? 'up' : 'down')
 
   // "This is used to jog axes (select in [HANDLE JOG] Mode)" — the axis is
   // whichever one the operator last touched with a jog key, which is how the
@@ -1000,7 +1167,18 @@ function cycleStart () {
   // Build the wire program now, so the switches read at CYCLE START are the ones
   // that govern the whole cycle. `rows` keeps the running-block highlight pointing
   // at the source line, which a switch that removes blocks would otherwise skew.
-  const { wire, rows } = wireProgram(s.program.lines, s)
+  // M97/M98/G65 are expanded here; a program that cannot stream faithfully
+  // (M99 loop, missing sub, macro arguments) refuses with the reason.
+  let wire, rows
+  try {
+    ({ wire, rows } = wireProgram(s.program.lines, {
+      ...s, getProgram: programByNumber, dryRunFeed: DRY_RUN_FEED[s.units][s.incIndex]
+    }))
+  } catch (e) {
+    if (!(e instanceof WireError)) throw e
+    s.message = e.message
+    return invalidate()
+  }
   if (!wire.length) {
     s.message = 'every block is switched out — nothing to run'
     return invalidate()
@@ -1035,6 +1213,12 @@ function onLine (line) {
     if (streamer.error) {
       s.alarm = `ERROR ${streamer.error.code} — ${streamer.error.text}`
       s.job = null
+      // Bench-found firmware latch (2026-08-07, present on stock grblHAL too):
+      // after an ok'd block, one errored block makes EVERY later g-code line
+      // repeat the error until a `$` command clears it. A `$G` costs nothing,
+      // refreshes the modal display, and un-bricks the next CYCLE START. It is
+      // very likely what produced history/g28-false-alarm.md.
+      link?.send('$G\n')
     } else if (streamer.done && s.job) {
       // Every block has been ACCEPTED, not executed — grbl answers `ok` when a
       // line is buffered. The machine is still cutting whatever is in the planner,
@@ -1109,6 +1293,9 @@ function onLine (line) {
     const opt = parseOpt(fb.value)
     if (opt.rx && streamer) streamer.rxBuffer = opt.rx
     if (opt.planner) s.plannerSize = opt.planner
+    s.caps.toolTable = (opt.tools ?? 0) > 0
+  } else if (fb.kind === 'NEWOPT') {
+    s.caps.expr = /\bEXPR\b/.test(String(fb.value))
   } else if (fb.kind === 'GC') {
     s.modal = fb.value
     s.units = /\bG20\b/.test(fb.value) ? 'IN' : 'MM'
@@ -1118,6 +1305,17 @@ function onLine (line) {
     // control can learn it — the board has no tool table to ask.
     const t = fb.value.match(/\bT(\d+)/)
     if (t) s.tool = Number(t[1])
+  } else if (fb.kind === 'T' && s.caps.toolTable) {
+    // A native tool-table row: [T:3|0.000,0.000,-20.000,0.000|0.000|…]. The
+    // machine's table is the truth; the local copy is display and fallback.
+    // The board prints ALL 32 rows, unset ones as zeros (bench 2026-08-07) —
+    // adopting those would overwrite "never measured" with a confident 0.000
+    // and silence the unmeasured-tool warning forever.
+    // ponytail: a tool honestly measured at exactly 0.000 is lost to this
+    // filter; track a per-tool measured flag if that ever matters.
+    const [id, coords] = String(fb.value).split('|')
+    const z = Number((coords ?? '').split(',')[2])
+    if (Number.isFinite(z) && z !== 0 && Number(id) > 0) s.tools = { ...s.tools, [Number(id)]: z }
   } else if (fb.kind === 'TLO') {
     s.tlo = fb.value[2] ?? 0
   } else if (fb.kind === 'FILE') {
@@ -1191,6 +1389,23 @@ function applyStatus (st) {
     link?.send('$G\n')
     link?.send('$#\n')
   }
+  // The firmware's run switches surface as Pn: chars — L block delete, T
+  // optional-stop-DISABLE (inverted: lamp on means T absent), Q single block.
+  // The lamps follow the machine's word, never a local boolean. Pn is omitted
+  // entirely when no signal is set, so absence means all three are clear.
+  if (s.caps.runSwitches) {
+    const pins = st.pins ?? ''
+    s.blockDelete = pins.includes('L')
+    s.optionStop = !pins.includes('T')
+    // Firmware powers up with M1 live (disable flag clear); a HAAS powers up
+    // with OPTION STOP off. Sync once per connection so the lamp starts where
+    // a student expects it — unless the board already carries T from before.
+    if (!s.optSynced && !s.job) {
+      s.optSynced = true
+      if (!pins.includes('T')) link?.send('$O\n')
+    }
+  }
+
   // Only when the machine actually told us. grblHAL leaves `A:` out of most
   // reports and refreshes it every so often — measured on the board, flood stayed
   // on through reports with no `A:` at all — so treating its absence as "off"
@@ -1227,6 +1442,10 @@ async function connect () {
     link = kind === 'websocket' ? websocketTransport({ host: $('host').value })
       : kind === 'serial' ? serialTransport()
         : simTransport()
+
+    // A new connection is a new firmware: relearn what it can do.
+    s.caps = { runSwitches: true, toolTable: false, expr: false }
+    s.optSynced = false
 
     link.onLine(onLine)
     await link.connect()
@@ -1362,13 +1581,19 @@ $('file').onchange = async (e) => {
 }
 
 // Physical keyboard shortcuts for the keys a student uses constantly.
+// The arrows follow the pendant's CURSOR group whenever anything on screen has
+// a cursor, and only stand in for the jog keys in SETUP:JOG with no cursor up —
+// an ArrowDown in EDIT must move the edit cursor, never the machine.
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return
-  const map = {
-    ArrowLeft: 'jog-x-plus', ArrowRight: 'jog-x-minus',
-    ArrowUp: 'jog-y-plus', ArrowDown: 'jog-y-minus',
-    PageUp: 'jog-z-plus', PageDown: 'jog-z-minus'
-  }
+  const jogging = s.mode === 'SETUP' && s.fn === 'JOG' && !hasCursor()
+  const map = jogging
+    ? { ArrowLeft: 'jog-x-plus', ArrowRight: 'jog-x-minus',
+        ArrowUp: 'jog-y-plus', ArrowDown: 'jog-y-minus',
+        PageUp: 'jog-z-plus', PageDown: 'jog-z-minus' }
+    : { ArrowLeft: 'left', ArrowRight: 'right',
+        ArrowUp: 'up', ArrowDown: 'down',
+        PageUp: 'page-up', PageDown: 'page-down' }
   if (map[e.key]) { e.preventDefault(); press(map[e.key]) }
 })
 

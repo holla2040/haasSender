@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -358,4 +358,96 @@ test('modalGroups shows an unknown code rather than dropping it', () => {
 test('modalGroups maps the HAAS names onto the extended work offsets', () => {
   assert.equal(modalGroups('G59.1').find(r => r.group === 'WORK OFFSET').meaning,
     'G154 P1 on a HAAS')
+})
+
+// ------------------------------------------------- the HAAS dialect transform
+
+test('wireLine: HAAS integer-P G04 is milliseconds, decimal-P is seconds', () => {
+  assert.deepEqual(wireLine('G04 P500', {}), ['G04 P0.5'])
+  assert.deepEqual(wireLine('G4 P10', {}), ['G4 P0.01'])
+  assert.deepEqual(wireLine('G04 P10.', {}), ['G04 P10.'])   // decimal stays seconds
+  assert.deepEqual(wireLine('G83 Z-1 R1 Q1 P500 F100', {}),  // canned-cycle P untouched
+    ['G83 Z-1 R1 Q1 P500 F100'])
+})
+
+test('wireLine: HAAS spellings translate — G31, M16, G154 P1-3', () => {
+  assert.deepEqual(wireLine('G31 Z-10 F50', {}), ['G38.2 Z-10 F50'])
+  assert.deepEqual(wireLine('M16 T2', {}), ['M6 T2'])
+  assert.deepEqual(wireLine('G154 P2', {}), ['G59.2'])
+  assert.deepEqual(wireLine('G154 P44', {}), ['G154 P44'])   // P4+ errors on the board, honestly
+})
+
+test('wireLine: G43 H splits into G43.1 without a tool table, passes through with one', () => {
+  assert.deepEqual(wireLine('G43 H3 Z50.', { tools: { 3: -20 } }),
+    ['G43.1 Z-20.0000', 'Z50.'])
+  assert.deepEqual(wireLine('G43 H3 Z50.', { tools: { 3: -20 }, caps: { toolTable: true } }),
+    ['G43 H3 Z50.'])
+})
+
+test('with native run switches, M01 and slashed blocks ride the wire', () => {
+  const lines = prepare('G0 X1\n/G0 X2\nM01\nG0 X3')
+  const { wire } = wireProgram(lines, { caps: { runSwitches: true } })
+  assert.deepEqual(wire, ['G0 X1', '/G0 X2', 'M01', 'G0 X3'])
+})
+
+// ------------------------------------------------------ subprogram expansion
+
+const SUB_PROGRAM = `O00100
+G0 X0
+M97 P200 L2
+M30
+N200 G1 X5 F100
+G1 X9
+M99`
+
+test('M97 splices the N-block range, repeats honour L, highlight follows the sub', () => {
+  const lines = prepare(SUB_PROGRAM)
+  const { wire, rows } = wireProgram(lines, {})
+  assert.deepEqual(wire,
+    ['G0 X0', 'N200 G1 X5 F100', 'G1 X9', 'N200 G1 X5 F100', 'G1 X9', 'M30'])
+  // rows point at the sub's own source lines, the way a control jumps its display
+  assert.deepEqual(rows.slice(1, 3), [4, 5])
+})
+
+test('nothing after M30 streams — where the manual parks M97 subs', () => {
+  const { wire } = wireProgram(prepare('G0 X1\nM30\nN200 G1 X5 F100\nM99'), {})
+  assert.deepEqual(wire, ['G0 X1', 'M30'])
+})
+
+test('M98 inlines a program from control memory, pinned to the calling row', () => {
+  const sub = prepare('O00200\nG1 X5 F100\nM99')
+  const lines = prepare('G0 X1\nM98 P200\nM30')
+  const { wire, rows } = wireProgram(lines, { getProgram: (n) => n === 200 ? sub : null })
+  assert.deepEqual(wire, ['G0 X1', 'G1 X5 F100', 'M30'])
+  assert.equal(rows[1], 1)                        // the M98 line, not the sub's
+})
+
+test('unstreamable programs refuse with the reason', () => {
+  const throws = (text, opts, re) =>
+    assert.throws(() => wireProgram(prepare(text), opts), (e) => e instanceof WireError && re.test(e.message))
+  throws('M97 P999\nM30\nN1 M99', {}, /no block N999/)
+  throws('M98 P777\nM30', { getProgram: () => null }, /O00777 is not in memory/)
+  throws('G0 X1\nM99', {}, /loops the program forever/)
+  throws('G65 P300 A5\nM30', { getProgram: () => prepare('M99') }, /macro arguments/)
+  throws('N1 M97 P1\nM30', {}, /nested deeper/)   // self-call recurses past the depth cap
+})
+
+test('a block-deleted G43 H keeps its slash on every line it becomes', () => {
+  const lines = prepare('/G43 H3 Z50.')
+  const { wire } = wireProgram(lines, { tools: { 3: -20 }, caps: { runSwitches: true } })
+  assert.deepEqual(wire, ['/G43.1 Z-20.0000', '/Z50.'])
+})
+
+test('DRY RUN substitutes every feed with the jog-rate feed — §3.13', () => {
+  const lines = prepare('G1 X10 F500\nG1 Y2\nG1 Z-1 F80\nM30')
+  assert.deepEqual(wireProgram(lines, { dryRun: true, dryRunFeed: 254 }).wire,
+    ['G1 X10 F254', 'G1 Y2', 'G1 Z-1 F254', 'M30'])
+  // Without a rate the old behaviour holds — M-strip only.
+  assert.deepEqual(wireProgram(lines, { dryRun: true }).wire,
+    ['G1 X10 F500', 'G1 Y2', 'G1 Z-1 F80', 'M30'])
+})
+
+test('HAAS G51 P translates to the MACH3 factor form; centre forms pass through', () => {
+  assert.deepEqual(wireLine('G51 P2', {}), ['G51 X2 Y2 Z2'])
+  assert.deepEqual(wireLine('G51 X0 Y0 P2', {}), ['G51 X0 Y0 P2'])  // board's error:36 answers it
 })

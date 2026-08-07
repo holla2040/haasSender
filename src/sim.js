@@ -17,6 +17,19 @@ const REPORT_MS = 250      // matches $397=250 on the real board
 const zero = () => [0, 0, 0, 0]
 const MOVING = new Set(['Run', 'Home', 'Jog'])
 
+// What the haasSender-branch ClearCore build accepts. The sim's contract is:
+// reject what the board rejects, with the board's error numbers — a classroom
+// seat must never execute something the bench errors on, and vice versa.
+const G_SUPPORTED = new Set([
+  0, 1, 2, 3, 4, 10, 17, 18, 19, 20, 21, 28, 30, 40, 43, 43.1, 43.2, 49,
+  50, 51, 53, 54, 55, 56, 57, 58, 59, 59.1, 59.2, 59.3, 61,
+  73, 80, 81, 82, 83, 85, 86, 89, 90, 91, 92, 92.1, 93, 94, 98, 99
+])
+const M_SUPPORTED = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 30])
+const MOTION_GROUP = new Set([0, 1, 2, 3, 73, 80, 81, 82, 83, 85, 86, 89])
+const CYCLES = new Set([73, 81, 82, 83, 85, 86, 89])
+const N_SIM_TOOLS = 32     // matches N_TOOLS on the branch firmware
+
 export class VirtualGrbl {
   constructor ({ rapidRate = 5000, maxTravel = [500, 400, 300, 360] } = {}) {
     this.rapidRate = rapidRate          // mm/min
@@ -24,6 +37,12 @@ export class VirtualGrbl {
     this.outbox = []
     this.onLineCb = () => {}
     this.reset(true)
+    // Survives soft reset, like the board: the tool table is NVS-backed and the
+    // $B/$S/$O switches are sys flags a 0x18 does not clear.
+    this.tools = new Map()              // tool id -> { z, r }
+    this.blockDelete = false
+    this.singleBlock = false
+    this.optStopDisabled = false
     this.timer = null
     this.reportTimer = null
   }
@@ -44,7 +63,16 @@ export class VirtualGrbl {
     this.inches = false                 // G21 default, matches $13=0
     this.wcs = 0                        // index into offsets, G54 == 0
     this.offsets = Array.from({ length: 9 }, zero)
-    this.tlo = zero()
+    this.g92 = zero()
+    this.tloZ = 0                       // active tool length offset, mm
+    this.motionMode = 0
+    this.invTime = false                // G93
+    this.retract98 = true               // G98 initial-point return
+    this.cycle = null                   // sticky canned-cycle state
+    this.scaling = null                 // G51 { center, factors }
+    this.pendingTool = 0                // T word; becomes active on M6
+    this.tool = 0
+    this.dwellRemaining = 0
     this.line = 0
     this.alarm = null
     this.ov = { feed: 100, rapid: 100, spindle: 100 }
@@ -131,6 +159,11 @@ export class VirtualGrbl {
 
       case 0xA0: this.flood = !this.flood; return
       case 0xA1: this.mist = !this.mist; return
+
+      // The firmware's own run-switch toggles: 0x88 optional stop, 0x89 single
+      // block. There is no realtime byte for block delete — $B only, like the board.
+      case 0x88: this.optStopDisabled = !this.optStopDisabled; return
+      case 0x89: this.singleBlock = !this.singleBlock; return
     }
   }
 
@@ -140,6 +173,13 @@ export class VirtualGrbl {
       return
     }
     if (line[0] === '$') return this.system(line)
+    if (line[0] === '/') {
+      // Block delete: with $B on the parser skips the line; off, the slash is
+      // simply consumed and the block runs — the firmware's exact behaviour.
+      if (this.blockDelete) return this.emit('ok')
+      line = line.slice(1)
+      if (!line) return this.emit('ok')
+    }
     this.gcode(line)
   }
 
@@ -151,7 +191,8 @@ export class VirtualGrbl {
     switch (line) {
       case '$I':
         this.emit('[VER:1.1f.haasSender-sim:]')
-        this.emit(`[OPT:VNML,${PLANNER},${RX_FREE + 1},4,0]`)
+        this.emit(`[OPT:VNML,${PLANNER},${RX_FREE + 1},4,${N_SIM_TOOLS}]`)
+        this.emit('[NEWOPT:EXPR]')
         this.emit('[AXS:4:XYZA]')
         this.emit('[FIRMWARE:grblHAL]')
         return this.emit('ok')
@@ -160,19 +201,53 @@ export class VirtualGrbl {
         this.offsets.forEach((o, i) => this.emit(`[${wcsName(i)}:${fmt(o)}]`))
         this.emit(`[G28:${fmt(zero())}]`)
         this.emit(`[G30:${fmt(zero())}]`)
-        this.emit(`[G92:${fmt(zero())}]`)
-        this.emit(`[TLO:${fmt(this.tlo)}]`)
+        this.emit(`[G92:${fmt(this.g92)}]`)
+        this.emit(`[TLO:${fmt([0, 0, this.tloZ, 0])}]`)
+        // Tool table rows, the branch firmware's exact habit (bench 2026-08-07):
+        // ALL rows print, unset tools as zeros — the client must not read a
+        // zero row as a measured length.
+        for (let id = 1; id <= N_SIM_TOOLS; id++) {
+          const t = this.tools.get(id) ?? {}
+          this.emit(`[T:${id}|${fmt([t.x ?? 0, t.y ?? 0, t.z ?? 0, 0])}|${(t.r ?? 0).toFixed(3)}|6,0,0||${id}]`)
+        }
         this.emit(`[PRB:${fmt(zero())}:0]`)
         return this.emit('ok')
 
-      case '$G':
-        this.emit(`[GC:G${this.motionMode ?? 0} ${wcsName(this.wcs)} G17 ` +
-          `${this.inches ? 'G20' : 'G21'} ${this.absolute ? 'G90' : 'G91'} G94 G49 G98 ` +
+      case '$G': {
+        const cyc = this.cycle && CYCLES.has(this.motionMode) ? this.motionMode : (this.motionMode ?? 0)
+        this.emit(`[GC:G${cyc} ${wcsName(this.wcs)} G17 ` +
+          `${this.inches ? 'G20' : 'G21'} ${this.absolute ? 'G90' : 'G91'} ` +
+          `${this.invTime ? 'G93' : 'G94'} ${this.tloZ ? 'G43.1' : 'G49'} ` +
+          `${this.retract98 ? 'G98' : 'G99'} ` +
           `M${this.spindleDir === 0 ? 5 : this.spindleDir > 0 ? 3 : 4} ` +
-          `M${this.flood ? 8 : 9} T0 F${this.feed} S${this.spindle}]`)
+          `M${this.flood ? 8 : 9} T${this.tool} F${this.feed} S${this.spindle}]`)
         return this.emit('ok')
+      }
 
       case '$13': this.emit('$13=0'); return this.emit('ok')
+
+      // The firmware's own run switches. $B is idle-only there and here.
+      case '$B':
+        if (this.state !== 'Idle') return this.emit('error:9')
+        this.blockDelete = !this.blockDelete
+        return this.emit('ok')
+      case '$S':
+        this.singleBlock = !this.singleBlock
+        return this.emit('ok')
+      case '$O':
+        this.optStopDisabled = !this.optStopDisabled
+        return this.emit('ok')
+
+      case '$$':
+        // The handful the PARAMETER page and the sender actually read.
+        for (const [k, v] of [[13, 0], [20, 0], [21, 0], [22, 0],
+          [30, 24000], [31, 0], [32, 0],
+          [110, 5000], [111, 5000], [112, 5000], [113, 3000],
+          [130, this.maxTravel[0]], [131, this.maxTravel[1]],
+          [132, this.maxTravel[2]], [133, this.maxTravel[3]]]) {
+          this.emit(`$${k}=${v}`)
+        }
+        return this.emit('ok')
 
       case '$H':
         this.alarm = null
@@ -200,72 +275,289 @@ export class VirtualGrbl {
     const words = line.toUpperCase().match(/([A-Z])\s*(-?[\d.]+)/g) || []
     if (!words.length) return this.emit('ok')
 
-    let motion = null
-    const target = this.absolute ? [...this.plannedEnd()] : zero()
-    let moved = false
-    let feed = this.feed
-
-    // Machine effects are DEFERRED to when the block executes; interpreter state
-    // (G90/G91, G20/G21, work offset, feed) applies now, because it governs how the
-    // following lines are read. This is the same split a real control makes: the
-    // parser runs ahead of the table, so an M5 on the last line must not stop the
-    // spindle while the first cut is still running.
-    let dir = null, rpm = null, flood = null
-    const effects = []
-
-    for (const w of words) {
-      const letter = w[0]
-      const value = Number(w.slice(1).trim())
-
-      if (letter === 'G') {
-        if (value === 0 || value === 1) { motion = value; this.motionMode = value }
-        else if (value === 4) { /* dwell: treated as instantaneous */ }
-        else if (value === 20) this.inches = true
-        else if (value === 21) this.inches = false
-        else if (value === 90) this.absolute = true
-        else if (value === 91) this.absolute = false
-        else if (value >= 54 && value <= 59) this.wcs = Math.round(value) - 54
-      } else if (letter === 'M') {
-        if (value === 3) dir = 1
-        else if (value === 4) dir = -1
-        else if (value === 5) dir = 0
-        else if (value === 8) flood = true
-        else if (value === 9) flood = false
-        else if (value === 30 || value === 2) { /* program end */ }
-      } else if (letter === 'F') {
-        feed = this.toMm(value)
-      } else if (letter === 'S') {
-        rpm = value
-      } else {
-        const axis = AXES.indexOf(letter)
-        if (axis >= 0) { target[axis] = this.toMm(value); moved = true }
+    // Collect the WHOLE block first, then validate, then apply — grbl rejects a
+    // block before any of it takes effect, and the target must be resolved under
+    // the block's FINAL distance mode. (Resolving as-you-go seeded an absolute
+    // target and applied it incrementally, doubling every unmentioned axis.)
+    const g = [], m = []
+    const axis = new Map()               // axis index -> typed value
+    const w = new Map()                  // other letters -> value
+    for (const token of words) {
+      const letter = token[0]
+      const value = Number(token.slice(1).trim())
+      if (letter === 'G') g.push(value)
+      else if (letter === 'M') m.push(value)
+      else {
+        const ai = AXES.indexOf(letter)
+        if (ai >= 0) axis.set(ai, value)
+        else w.set(letter, value)
       }
     }
 
-    this.feed = feed
-    if (rpm !== null) effects.push(() => { this.commandedRpm = rpm; if (this.spindleDir) this.spindle = rpm })
-    if (dir !== null) {
-      effects.push(() => {
-        this.spindleDir = dir
-        this.spindle = dir === 0 ? 0 : (this.commandedRpm ?? 0)
+    // Reject like the board rejects, before any state changes.
+    for (const v of g) if (!G_SUPPORTED.has(v)) return this.emit('error:20')
+    for (const v of m) if (!M_SUPPORTED.has(v)) return this.emit('error:20')
+    if (w.has('D')) return this.emit('error:20')          // no cutter comp
+    const motions = g.filter(v => MOTION_GROUP.has(v))
+    if (motions.length > 1) return this.emit('error:21')
+
+    // Snapshot the parser state a failing block must not half-apply.
+    const snap = {
+      inches: this.inches, absolute: this.absolute, wcs: this.wcs,
+      tloZ: this.tloZ, invTime: this.invTime, retract98: this.retract98,
+      motionMode: this.motionMode, feed: this.feed, g92: [...this.g92],
+      scaling: this.scaling, cycle: this.cycle ? { ...this.cycle } : null,
+      pendingTool: this.pendingTool
+    }
+    const fail = (code) => { Object.assign(this, snap, { g92: snap.g92 }); return this.emit(code) }
+
+    // Value words are read before being claimed; anything left unclaimed at the
+    // end is error:36, exactly as the firmware answers.
+    const fWord = w.has('F') ? w.get('F') : null
+    const sWord = w.has('S') ? w.get('S') : null
+    const tWord = w.has('T') ? Math.round(w.get('T')) : null
+    w.delete('F'); w.delete('S'); w.delete('N'); w.delete('T')
+
+    // Units and distance mode are block-modal: they govern every value in this
+    // block no matter where they sit in it.
+    const inch = g.includes(20) ? true : g.includes(21) ? false : this.inches
+    const abs = g.includes(91) ? false : g.includes(90) ? true : this.absolute
+    const conv = (v) => inch ? v * 25.4 : v
+    for (const v of g) {
+      if (v === 20) this.inches = true
+      else if (v === 21) this.inches = false
+      else if (v === 90) this.absolute = true
+      else if (v === 91) this.absolute = false
+      else if (v === 93) this.invTime = true
+      else if (v === 94) this.invTime = false
+      else if (v === 98) this.retract98 = true
+      else if (v === 99) this.retract98 = false
+      else if (v >= 54 && v <= 59) this.wcs = Math.round(v) - 54
+      else if (v === 59.1 || v === 59.2 || v === 59.3) this.wcs = 6 + Math.round((v - 59.1) * 10)
+    }
+    if (fWord !== null) this.feed = conv(fWord)
+    if (tWord !== null) {
+      if (tWord < 0 || tWord > N_SIM_TOOLS) return fail('error:20')
+      this.pendingTool = tWord
+    }
+
+    const wco = this.offsets[this.wcs]
+    const g53 = g.includes(53)
+    // work -> machine on this block: WCS + G92 shift + tool length on Z.
+    const toMach = (i, v) =>
+      g53 ? conv(v) : conv(v) + wco[i] + this.g92[i] + (i === 2 ? this.tloZ : 0)
+
+    const effects = []
+    const path = []
+
+    // ---- offsets, TLO and the tool table (parse-time, like a synced write) --
+
+    if (g.includes(10)) {
+      const l = w.has('L') ? Math.round(w.get('L')) : null
+      const p = w.has('P') ? Math.round(w.get('P')) : null
+      w.delete('L'); w.delete('P')
+      if (w.has('R')) return fail('error:20')   // ponytail: no rotation here — the board has it, this sim refuses rather than lies
+      if (l === 2) {
+        if (p === null || p < 0 || p > 9) return fail('error:20')
+        const row = this.offsets[p === 0 ? this.wcs : p - 1]
+        for (const [i, v] of axis) row[i] = conv(v)   // G10 L2 values are machine coords
+        axis.clear()
+      } else if (l === 1) {
+        if (p === null || p < 1 || p > N_SIM_TOOLS) return fail('error:20')
+        const t = this.tools.get(p) ?? {}
+        for (const [i, v] of axis) t[AXES[i].toLowerCase()] = conv(v)
+        if (w.has('R')) { t.r = conv(w.get('R')); w.delete('R') }
+        this.tools.set(p, t)
+        axis.clear()
+      } else
+        return fail('error:20')                 // ponytail: L10/L11 not modelled — sender writes absolute via L1
+    }
+
+    if (g.includes(49)) this.tloZ = 0
+    if (g.includes(43)) {                        // native tool-table TLO, branch firmware
+      if (!w.has('H')) return fail('error:28')
+      const h = Math.round(w.get('H')); w.delete('H')
+      if (h < 0 || h > N_SIM_TOOLS) return fail('error:20')
+      this.tloZ = h === 0 ? 0 : (this.tools.get(h)?.z ?? 0)
+    }
+    if (g.includes(43.2)) {
+      if (!w.has('H')) return fail('error:28')
+      const h = Math.round(w.get('H')); w.delete('H')
+      if (h < 1 || h > N_SIM_TOOLS) return fail('error:20')
+      this.tloZ += this.tools.get(h)?.z ?? 0
+    }
+    if (g.includes(43.1)) {
+      if (!axis.has(2)) return fail('error:28')
+      this.tloZ = conv(axis.get(2)); axis.delete(2)
+    }
+
+    if (g.includes(92.1)) this.g92 = zero()
+    if (g.includes(92)) {
+      const base = this.plannedEnd()
+      for (const [i, v] of axis)
+        this.g92[i] = base[i] - wco[i] - (i === 2 ? this.tloZ : 0) - conv(v)
+      axis.clear()
+    }
+
+    if (g.includes(51)) {
+      // MACH3 scaling, bench-verified 2026-08-07: the AXIS WORDS are the
+      // factors and scaling is about work zero — at X0, `G51 X2` then
+      // `G0 X10` landed at MPos 20.000. HAAS's center+P form answers
+      // error:36 on the board (P is an unused word there), and does here.
+      if (!axis.size) return fail('error:28')
+      const factors = [1, 1, 1, 1]
+      for (const [i, v] of axis) factors[i] = v
+      axis.clear()
+      this.scaling = { factors }
+    }
+    if (g.includes(50)) this.scaling = null
+
+    // scale a WORK-coordinate value / an incremental delta, about work zero
+    const scaleAbs = (i, v) => this.scaling ? v * this.scaling.factors[i] : v
+    const scaleInc = (i, d) => this.scaling ? d * this.scaling.factors[i] : d
+
+    // ---- G28/G30: rapid home via optional intermediate point ----------------
+
+    if (g.includes(28) || g.includes(30)) {
+      if (axis.size) {
+        const base = this.plannedEnd()
+        const mid = base.map((v, i) => !axis.has(i) ? v
+          : abs ? toMach(i, scaleAbs(i, axis.get(i))) : v + conv(scaleInc(i, axis.get(i))))
+        axis.clear()
+        path.push({ target: mid, rate: this.rapidRate, rapid: true })
+      }
+      path.push({ target: zero(), rate: this.rapidRate, rapid: true })
+    }
+
+    // ---- dwell --------------------------------------------------------------
+
+    if (g.includes(4)) {                        // P is SECONDS here, like the board;
+      if (!w.has('P')) return fail('error:28')  // the sender translates HAAS integer-ms
+      path.push({ dwell: Math.max(0, w.get('P')) })
+      w.delete('P')
+    }
+
+    // ---- canned cycles ------------------------------------------------------
+
+    const cycleCode = motions.find(v => CYCLES.has(v))
+    if (g.includes(80)) { this.cycle = null; this.motionMode = 80 }
+
+    if (cycleCode !== undefined || (this.cycle && axis.size && !motions.length && !g.includes(28) && !g.includes(30))) {
+      if (cycleCode !== undefined) this.motionMode = cycleCode
+      const c = this.cycle = {
+        code: cycleCode ?? this.cycle.code,
+        z: axis.has(2) ? conv(axis.get(2)) : this.cycle?.z,      // work coords, mm
+        r: w.has('R') ? conv(w.get('R')) : this.cycle?.r,
+        p: w.has('P') ? w.get('P') : this.cycle?.p,              // seconds, sticky (manual p.232)
+        q: w.has('Q') ? conv(w.get('Q')) : this.cycle?.q
+      }
+      axis.delete(2); w.delete('R'); w.delete('P'); w.delete('Q')
+      if (c.z === undefined || c.r === undefined) return fail('error:28')
+      if ((c.code === 73 || c.code === 83) && !(c.q > 0)) return fail('error:28')
+      if (c.code === 86) return fail('error:28')   // bench 2026-08-07: the board answers 28; mirror it until the missing word is identified
+      if (this.feed <= 0) return fail('error:22')
+
+      const L = w.has('L') ? Math.max(0, Math.round(w.get('L'))) : 1
+      w.delete('L')
+
+      // L0 sets the cycle up without executing it — the obstacle-avoidance idiom.
+      if (L > 0) {
+        const base = this.plannedEnd()
+        const initialZ = base[2]                 // G98 return point for this block
+        const rZ = g53 ? c.r : c.r + wco[2] + this.g92[2] + this.tloZ
+        const bottom = g53 ? c.z : c.z + wco[2] + this.g92[2] + this.tloZ
+        let x = base[0], y = base[1], a = base[3]
+        let zNow = initialZ
+        for (let rep = 0; rep < L; rep++) {
+          // Incremental repeats space the holes; absolute repeats re-drill in
+          // place, which is legal and pointless on the real control too.
+          if (axis.has(0)) x = abs && rep === 0 ? toMach(0, scaleAbs(0, axis.get(0))) : abs ? x : x + conv(scaleInc(0, axis.get(0)))
+          if (axis.has(1)) y = abs && rep === 0 ? toMach(1, scaleAbs(1, axis.get(1))) : abs ? y : y + conv(scaleInc(1, axis.get(1)))
+          path.push({ target: [x, y, zNow, a], rate: this.rapidRate, rapid: true })
+          path.push({ target: [x, y, rZ, a], rate: this.rapidRate, rapid: true })
+          if (c.code === 73 || c.code === 83) {
+            let zAt = rZ
+            while (zAt > bottom + 1e-9) {
+              const next = Math.max(bottom, zAt - c.q)
+              path.push({ target: [x, y, next, a], rate: this.feed, rapid: false })
+              if (next > bottom + 1e-9) {
+                // 83 retracts fully to R; 73 chip-breaks with a short back-off
+                const up = c.code === 83 ? rZ : Math.min(rZ, next + 0.5)
+                path.push({ target: [x, y, up, a], rate: this.rapidRate, rapid: true })
+                if (c.code === 83) path.push({ target: [x, y, next + 0.5, a], rate: this.rapidRate, rapid: true })
+              }
+              zAt = next
+            }
+          } else {
+            path.push({ target: [x, y, bottom, a], rate: this.feed, rapid: false })
+          }
+          if ((c.code === 82 || c.code === 89) && c.p > 0) path.push({ dwell: c.p })
+          const backTo = this.retract98 ? initialZ : rZ
+          const feedBack = c.code === 85 || c.code === 89
+          path.push({ target: [x, y, backTo, a], rate: feedBack ? this.feed : this.rapidRate, rapid: !feedBack })
+          zNow = backTo
+        }
+        axis.clear()
+      } else
+        axis.clear()
+    }
+
+    // ---- plain motion -------------------------------------------------------
+
+    else if (axis.size || motions.some(v => v === 2 || v === 3)) {
+      const motion = motions.length ? motions[0] : this.motionMode
+      if (motion === 80 || motion === undefined || motion === null) return fail('error:20')
+      if (motions.length && (motion === 0 || motion === 1 || motion === 2 || motion === 3)) {
+        this.motionMode = motion
+        this.cycle = null              // G00/G01 (and arcs) cancel a canned cycle, manual p.235
+      }
+
+      if (motion === 2 || motion === 3) {
+        // ponytail: arcs travel straight to their endpoint — operator training,
+        // not toolpath preview. I/J/K/R are accepted and ignored.
+        w.delete('I'); w.delete('J'); w.delete('K'); w.delete('R')
+      }
+
+      if (axis.size) {
+        const base = this.plannedEnd()
+        const target = base.map((v, i) => !axis.has(i) ? v
+          : abs ? toMach(i, scaleAbs(i, axis.get(i))) : v + conv(scaleInc(i, axis.get(i))))
+        axis.clear()
+
+        if (target.some((v, i) => Math.abs(v) > this.maxTravel[i])) return this.raiseAlarm(2)
+        if (motion !== 0 && this.feed <= 0) return fail('error:22')
+
+        const dist = Math.hypot(...target.map((t, i) => t - this.plannedEnd()[i]))
+        const rate = motion === 0 ? this.rapidRate
+          : this.invTime ? Math.max(1, dist * this.feed)   // G93: F = 1/minutes
+          : this.feed
+        path.push({ target, rate, rapid: motion === 0 })
+      }
+    }
+
+    // ---- M effects, deferred to execution ----------------------------------
+
+    if (sWord !== null) effects.push(() => { this.commandedRpm = sWord; if (this.spindleDir) this.spindle = sWord })
+    for (const v of m) {
+      if (v === 3) effects.push(() => { this.spindleDir = 1; this.spindle = this.commandedRpm ?? 0 })
+      else if (v === 4) effects.push(() => { this.spindleDir = -1; this.spindle = this.commandedRpm ?? 0 })
+      else if (v === 5) effects.push(() => { this.spindleDir = 0; this.spindle = 0 })
+      else if (v === 7) effects.push(() => { this.mist = true })
+      else if (v === 8) effects.push(() => { this.flood = true })
+      else if (v === 9) effects.push(() => { this.flood = false; this.mist = false })
+      else if (v === 0) effects.push(() => { this.state = 'Hold' })
+      else if (v === 1) effects.push(() => { if (!this.optStopDisabled) this.state = 'Hold' })
+      else if (v === 6) effects.push(() => {
+        this.tool = this.pendingTool
+        this.state = 'Hold'
+        this.emit(`[MSG:Tool change T${this.tool}]`)
       })
-    }
-    if (flood !== null) effects.push(() => { this.flood = flood; if (!flood) this.mist = false })
-
-    const block = { n: ++this.line, effects }
-
-    if (moved) {
-      if (motion === null) motion = this.motionMode ?? 0
-      const abs = this.absolute ? target : this.plannedEnd().map((v, i) => v + target[i])
-
-      if (abs.some((v, i) => Math.abs(v) > this.maxTravel[i])) return this.raiseAlarm(2)
-      if (motion === 1 && feed <= 0) return this.emit('error:22')
-
-      block.target = abs
-      block.rate = motion === 0 ? this.rapidRate : feed
-      block.rapid = motion === 0
+      // M2/M30: program end — the queue draining to Idle is the machine's answer
     }
 
+    if (w.size || axis.size) return fail('error:36')      // unused words
+
+    const block = { n: ++this.line, effects, path, step: 0 }
     this.queue.push(block)
     if (this.state === 'Idle') this.state = 'Run'
 
@@ -319,41 +611,63 @@ export class VirtualGrbl {
   advance () {
     this.current = this.queue.shift() || null
     if (!this.current) return null
-    for (const effect of this.current.effects ?? []) effect()   // jog and $H carry none
+    // Jog and $H push bare { target } blocks; normalise everything to a path so
+    // tick() has one shape to walk (a canned-cycle line is many steps, one block).
+    if (this.current.target && !this.current.path) {
+      this.current.path = [{ target: this.current.target, rate: this.current.rate, rapid: this.current.rapid }]
+    }
+    this.current.step ??= 0
+    for (const effect of this.current.effects ?? []) effect()
     this.line = this.current.n
     if (this.owedOks > 0) { this.owedOks--; this.emit('ok') }
     return this.current
   }
 
+  /** A block just finished: single block holds after EVERY block, like $S. */
+  finishBlock () {
+    const wasJog = this.current?.jog
+    this.current = null
+    if (this.singleBlock && !wasJog && this.state === 'Run') this.state = 'Hold'
+  }
+
   tick (dt) {
     if (this.state === 'Hold' || this.state === 'Alarm') return
 
-    // Blocks with no motion — M3, M8, a bare G90 — execute the instant they reach
-    // the front of the planner, so run them off before spending any motion budget.
-    while (!this.current?.target) {
-      if (this.current) this.current = null
-      if (!this.advance()) break
-    }
-    if (!this.current) {
-      if (MOVING.has(this.state)) this.state = 'Idle'
-      return
-    }
+    while (dt > 0) {
+      if (!this.current) {
+        if (!this.queue.length) break
+        this.advance()
+        if (this.state === 'Hold') return       // an M0/M1/M6 effect fired
+        continue
+      }
 
-    const scale = (this.current.rapid ? this.ov.rapid : this.ov.feed) / 100
-    let budget = ((this.current.rate * scale) / 60) * dt
+      const step = this.current.path?.[this.current.step]
+      if (!step) { this.finishBlock(); if (this.state === 'Hold') return; continue }
 
-    while (budget > 0 && this.current?.target) {
-      const delta = this.current.target.map((t, i) => t - this.mpos[i])
+      if (step.dwell !== undefined) {
+        if (this.dwellRemaining === 0) this.dwellRemaining = step.dwell
+        const used = Math.min(dt, this.dwellRemaining)
+        this.dwellRemaining -= used
+        dt -= used
+        if (this.dwellRemaining <= 1e-9) { this.dwellRemaining = 0; this.current.step++ }
+        continue
+      }
+
+      if (step.effect) { step.effect(); this.current.step++; continue }
+
+      const scale = (step.rapid ? this.ov.rapid : this.ov.feed) / 100
+      const mmPerSec = (step.rate * scale) / 60
+      const delta = step.target.map((t, i) => t - this.mpos[i])
       const dist = Math.hypot(...delta)
+      const budget = mmPerSec * dt
 
       if (dist <= budget || dist < 1e-9) {
-        this.mpos = [...this.current.target]
-        budget -= dist
-        this.current = null
-        while (!this.current?.target) { if (!this.advance()) break }
+        this.mpos = [...step.target]
+        dt -= mmPerSec > 0 ? dist / mmPerSec : dt
+        this.current.step++
       } else {
         this.mpos = this.mpos.map((v, i) => v + (delta[i] / dist) * budget)
-        budget = 0
+        dt = 0
       }
     }
 
@@ -367,8 +681,12 @@ export class VirtualGrbl {
   /** Where the machine will be once everything currently queued has run. */
   plannedEnd () {
     for (let i = this.queue.length - 1; i >= 0; i--) {
+      const p = this.queue[i].path
+      if (p) { for (let j = p.length - 1; j >= 0; j--) if (p[j].target) return p[j].target }
       if (this.queue[i].target) return this.queue[i].target
     }
+    const cp = this.current?.path
+    if (cp) for (let j = cp.length - 1; j >= 0; j--) if (cp[j].target) return cp[j].target
     return this.current?.target ?? this.mpos
   }
 
@@ -394,13 +712,20 @@ export class VirtualGrbl {
       (this.flood ? 'F' : '') + (this.mist ? 'M' : '')
     if (acc) r += `|A:${acc}`
 
+    // Software run switches surface as control-signal chars, firmware order:
+    // L block delete, T optional-stop-disable, Q single block (report.c:166).
+    const pn = (this.blockDelete ? 'L' : '') + (this.optStopDisabled ? 'T' : '') +
+      (this.singleBlock ? 'Q' : '')
+    if (pn) r += `|Pn:${pn}`
+
     return r + '>'
   }
 
   currentFeed () {
-    if (!this.current?.target) return 0
-    const scale = (this.current.rapid ? this.ov.rapid : this.ov.feed) / 100
-    return this.current.rate * scale
+    const step = this.current?.path?.[this.current.step]
+    if (!step?.target) return 0
+    const scale = (step.rapid ? this.ov.rapid : this.ov.feed) / 100
+    return step.rate * scale
   }
 
   /** Instructors can provoke a fault so students see the alarm pane do something. */
