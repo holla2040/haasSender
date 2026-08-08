@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { VirtualGrbl } from '../src/sim.js'
-import { Streamer, parseStatus, prepare } from '../src/grbl.js'
+import { Streamer, parseStatus, prepare, HAAS_COLLISIONS } from '../src/grbl.js'
 
 /**
  * A simulator wired to collect its output, with timers left off so tests drive it.
@@ -235,7 +235,8 @@ test('a mid-line G91 no longer doubles the axes the block does not mention', () 
   write('G91 G0 X5\n'); run(5)                   // was [8,14] — C4 in the report
   assert.deepEqual(m.mpos.slice(0, 2), [8, 7])
   write('G90 G28 G91 Z0\n'); run(5)              // the manual's program ending
-  assert.equal(m.mpos[0], 0)
+  assert.equal(m.mpos[0], 8, 'named-axis G28 must leave X alone')
+  assert.equal(m.mpos[2], 0)
 })
 
 test('offset and TLO writes write, they do not move the machine', () => {
@@ -262,6 +263,49 @@ test('G81 drills and retracts; unsupported codes answer error:20, unused words e
   assert.deepEqual(out.filter(l => l.startsWith('error:')), ['error:20', 'error:20', 'error:36'])
 })
 
+// The simulator was already the honest one here — its allowlist never ran these.
+// This pins that down so the classroom seat and the wire cannot drift apart: the
+// codes the sender refuses to send are the codes the sim refuses to run, and a
+// refusal leaves the machine exactly as it found it.
+test('the codes the wire refuses, the simulator refuses too, and changes nothing', () => {
+  const { m, out, write, run } = bench()
+  write('M3 S1000\nM8\nT3 M6\n'); run(5)
+  m.realtime(0x7E); run(5)                        // clear the M6 hold
+  const before = {
+    ov: { ...m.ov }, spindle: m.spindle, dir: m.spindleDir, flood: m.flood,
+    mist: m.mist, tool: m.tool, tloZ: m.tloZ, state: m.state, mpos: [...m.mpos]
+  }
+  out.length = 0
+
+  // A real block per entry — a label like "M70-M73" is not one a parser can read,
+  // and deriving blocks from the labels made this pass on malformed input instead
+  // of on the collision. The key list is checked against the table below, so a
+  // collision added without a block here fails rather than going untested.
+  const BLOCKS = {
+    'M48 M49': 'M48',
+    'M50 M51 M53': 'M51 P0',
+    M60: 'M60',
+    M61: 'M61 Q5',
+    'M70-M73': 'M70',
+    'G28.1 G30.1': 'G28.1',
+    'G10 L11': 'G10 L11 P5 Z2.5',
+    'G10 L1 with R': 'G10 L1 P5 R2.5'
+  }
+  assert.deepEqual(Object.keys(BLOCKS).sort(), HAAS_COLLISIONS.map(([l]) => l).sort(),
+    'a collision has no representative block here')
+
+  const blocks = Object.values(BLOCKS)
+  for (const code of blocks) write(code + '\n')
+  run(10)
+
+  assert.deepEqual(out.filter(l => l.startsWith('error:')), blocks.map(() => 'error:20'),
+    `every refused code must answer error:20, got ${out.join(' ')}`)
+  assert.deepEqual({
+    ov: { ...m.ov }, spindle: m.spindle, dir: m.spindleDir, flood: m.flood,
+    mist: m.mist, tool: m.tool, tloZ: m.tloZ, state: m.state, mpos: [...m.mpos]
+  }, before, 'a refused code changed machine state')
+})
+
 test('M0 and M6 hold like the machine; cycle start resumes', () => {
   const { m, write, run } = bench()
   write('T2 M6\nG0 X1\n'); run(2)
@@ -269,6 +313,41 @@ test('M0 and M6 hold like the machine; cycle start resumes', () => {
   assert.equal(m.tool, 2)
   m.realtime(0x7E); run(5)
   assert.equal(m.mpos[0], 1)
+})
+
+test('HAAS G10 L10 writes H length from R and leaves tool radius unchanged', () => {
+  const { m, write } = bench()
+  m.tools.set(5, { z: -10, r: 7 })
+  write('G10 L10 P5 R2.5\n')
+  assert.deepEqual(m.tools.get(5), { z: 2.5, r: 7 })
+  write('G20\nG10 L10 P5 R1.\n')
+  assert.equal(m.tools.get(5).z, 25.4)
+  assert.equal(m.tools.get(5).r, 7)
+})
+
+test('HAAS G28 homes named axes, cancels TLO, and leaves other axes alone', () => {
+  const { m, write, run } = bench()
+  m.mpos = [10, 20, 30, 40]
+  m.tloZ = -25.4
+  write('G91 G28 Z0\n'); run(30)
+  assert.deepEqual(m.mpos, [10, 20, 0, 40])
+  assert.equal(m.tloZ, 0)
+  m.mpos = [1, 2, 3, 4]
+  write('G28\n'); run(30)
+  assert.deepEqual(m.mpos, [0, 0, 0, 0])
+})
+
+test('M00 stops spindle and coolant before hold; M30 also cancels TLO', () => {
+  const { m, out, write, run } = bench()
+  write('M3 S1000\nM7\nM8\nM0\n'); run(2)
+  assert.deepEqual({ state: m.state, spindle: m.spindle, dir: m.spindleDir, flood: m.flood, mist: m.mist },
+    { state: 'Hold', spindle: 0, dir: 0, flood: false, mist: false })
+  m.realtime(0x7E); run(1)
+  m.tools.set(1, { z: -25.4 })
+  write('G43 H1\nM3 S900\nM8\nM30\n'); run(2)
+  assert.deepEqual({ state: m.state, spindle: m.spindle, dir: m.spindleDir, flood: m.flood, mist: m.mist, tlo: m.tloZ },
+    { state: 'Idle', spindle: 0, dir: 0, flood: false, mist: false, tlo: 0 })
+  assert.ok(out.includes('[MSG:HAAS:M30]'))
 })
 
 test('$S holds after every block; $B decides slashed blocks; Pn reports both', () => {

@@ -220,6 +220,7 @@ export class VirtualGrbl {
         this.emit('[NEWOPT:EXPR]')
         this.emit('[AXS:4:XYZA]')
         this.emit('[FIRMWARE:grblHAL]')
+        this.emit('[PLUGIN:HAAS parity v0.2]')
         return this.emit('ok')
 
       case '$#':
@@ -378,21 +379,27 @@ export class VirtualGrbl {
       const l = w.has('L') ? Math.round(w.get('L')) : null
       const p = w.has('P') ? Math.round(w.get('P')) : null
       w.delete('L'); w.delete('P')
-      if (w.has('R')) return fail('error:20')   // ponytail: no rotation here — the board has it, this sim refuses rather than lies
       if (l === 2) {
+        if (w.has('R')) return fail('error:20') // no G10 L2 rotation in the simulator
         if (p === null || p < 0 || p > 9) return fail('error:20')
         const row = this.offsets[p === 0 ? this.wcs : p - 1]
         for (const [i, v] of axis) row[i] = conv(v)   // G10 L2 values are machine coords
         axis.clear()
       } else if (l === 1) {
+        if (w.has('R')) return fail('error:20') // grbl radius maintenance is not student-facing HAAS syntax
         if (p === null || p < 1 || p > N_SIM_TOOLS) return fail('error:20')
         const t = this.tools.get(p) ?? {}
         for (const [i, v] of axis) t[AXES[i].toLowerCase()] = conv(v)
-        if (w.has('R')) { t.r = conv(w.get('R')); w.delete('R') }
         this.tools.set(p, t)
         axis.clear()
+      } else if (l === 10) {
+        if (p === null || p < 1 || p > N_SIM_TOOLS || !w.has('R') || axis.size) return fail('error:20')
+        const t = this.tools.get(p) ?? {}
+        t.z = conv(w.get('R'))
+        w.delete('R')
+        this.tools.set(p, t)
       } else
-        return fail('error:20')                 // ponytail: L10/L11 not modelled — sender writes absolute via L1
+        return fail('error:20')
     }
 
     // G49 is deferred to after this block's targets are computed: on the bench,
@@ -445,14 +452,24 @@ export class VirtualGrbl {
     // ---- G28/G30: rapid home via optional intermediate point ----------------
 
     if (g.includes(28) || g.includes(30)) {
+      const selected = [...axis.keys()]
+      let finalBase = this.plannedEnd()
       if (axis.size) {
-        const base = this.plannedEnd()
-        const mid = base.map((v, i) => !axis.has(i) ? v
+        finalBase = finalBase.map((v, i) => !axis.has(i) ? v
           : abs ? toMach(i, scaleAbs(i, axis.get(i))) : v + conv(scaleInc(i, axis.get(i))))
-        axis.clear()
-        path.push({ target: mid, rate: this.rapidRate, rapid: true })
+        path.push({ target: finalBase, rate: this.rapidRate, rapid: true })
       }
-      path.push({ target: zero(), rate: this.rapidRate, rapid: true })
+      axis.clear()
+      if (g.includes(28)) {
+        // HAAS G28 cancels tool length after the optional intermediate leg and
+        // returns only named axes (all axes when none are named) to machine zero.
+        path.push({ effect: () => { this.tloZ = 0 } })
+        const home = selected.length ? selected : [0, 1, 2, 3]
+        const target = finalBase.map((v, i) => home.includes(i) ? 0 : v)
+        path.push({ target, rate: this.rapidRate, rapid: true })
+      } else {
+        path.push({ target: zero(), rate: this.rapidRate, rapid: true })
+      }
     }
 
     // ---- dwell --------------------------------------------------------------
@@ -576,14 +593,21 @@ export class VirtualGrbl {
       else if (v === 31 || v === 33) effects.push(() => { this.chipFwd = v === 31 })
       else if (v === 8) effects.push(() => { this.flood = true })
       else if (v === 9) effects.push(() => { this.flood = false; this.mist = false })
-      else if (v === 0) effects.push(() => { this.state = 'Hold' })
+      else if (v === 0) effects.push(() => {
+        this.spindleDir = 0; this.spindle = 0; this.flood = false; this.mist = false
+        this.state = 'Hold'
+      })
       else if (v === 1) effects.push(() => { if (!this.optStopDisabled) this.state = 'Hold' })
       else if (v === 6) effects.push(() => {
         this.tool = this.pendingTool
         this.state = 'Hold'
         this.emit(`[MSG:Tool change T${this.tool}]`)
       })
-      // M2/M30: program end — the queue draining to Idle is the machine's answer
+      else if (v === 30) effects.push(() => {
+        this.spindleDir = 0; this.spindle = 0; this.flood = false; this.mist = false; this.tloZ = 0
+        this.emit('[MSG:HAAS:M30]')
+      })
+      // M2: program end — the queue draining to Idle is the machine's answer
     }
 
     if (w.size || axis.size) return fail('error:36')      // unused words

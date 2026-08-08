@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit-html'
-import { WCS, TOOL_COUNT, words, modalGroups, describeSetting } from '../grbl.js'
+import { WCS, TOOL_COUNT, words, modalGroups, describeSetting, HAAS_COLLISIONS } from '../grbl.js'
 import { UNAVAILABLE, VERIFIED, GROUPS } from '../keys.js'
 
 // Counted from the key tables rather than written down, so the HELP page cannot
@@ -390,11 +390,12 @@ const G_CODES = [
   ['G5', 'cubic spline, I J P Q.', LC_G + 'g5'],
   ['G5.1', 'quadratic spline, I J.', LC_G + 'g5.1'],
   ['G10 L2 L20', 'set work offset P to values, or to where it is.', LC_G + 'g10-l2'],
-  ['G10 L1 L10', 'write tool P into the tool table. L11 too.', LC_G + 'g10-l1'],
+  ['G10 L1', 'native maintenance: write tool P length.', LC_G + 'g10-l1'],
+  ['G10 L10', 'HAAS: set H tool P length from R (manual p.245).'],
   ['G17 G18 G19', 'plane for arcs and cycles: XY, ZX, YZ.', LC_G + 'g17-g19.1'],
   ['G20 G21', 'inch / millimetre.', LC_G + 'g20-g21'],
-  ['G28 G28.1', 'go to stored position 1 / store it from here.', LC_G + 'g28-g28.1'],
-  ['G30 G30.1', 'go to stored position 2 / store it from here.', LC_G + 'g30-g30.1'],
+  ['G28', 'HAAS machine zero; named axes only; cancels H (p.249).'],
+  ['G30', 'go to stored position 2. Same caveat.', LC_G + 'g30-g30.1'],
   ['G38.2-G38.5', 'probe toward / away. .3 and .5 do not alarm.', LC_G + 'g38'],
   ['G40', 'cutter compensation off — the only state here.', LC_G + 'g40'],
   ['G43', 'tool length offset from the table, H picks it.', LC_G + 'g43'],
@@ -431,23 +432,15 @@ const G_CODES = [
  * documents them — the 2014 Mill Operator's Manual does, and it is on paper.
  */
 const M_CODES = [
-  ['M0', 'program stop. CYCLE START carries on.', LC_M + 'm0-m1'],
+  ['M0', 'stop axes/spindle/coolant. CYCLE START resumes (p.322).'],
   ['M1', 'optional stop, when OPT STOP is on.', LC_M + 'm0-m1'],
   ['M2', 'program end.', LC_M + 'm2-m30'],
-  ['M30', 'program end, rewind to the top.', LC_M + 'm2-m30'],
-  ['M60', 'pallet change pause. A plain stop here.', LC_M + 'm60'],
+  ['M30', 'end/rewind; spindle/coolant off; cancel H (p.326).'],
   ['M3 M4 M5', 'spindle on CW / on CCW / off. S sets rpm.', LC_M + 'm3-m4-m5'],
   ['M6', 'tool change: it holds and waits for you.', LC_M + 'm6'],
   ['M7', 'mist coolant on. Same output as M88.', LC_M + 'm7-m8-m9'],
   ['M8', 'flood coolant on.', LC_M + 'm7-m8-m9'],
   ['M9', 'all coolant off.', LC_M + 'm7-m8-m9'],
-  ['M48 M49', 'enable / disable the feed and speed overrides.', LC_M + 'm48-m49'],
-  ['M50', 'feed override control. P0 turns it off.', LC_M + 'm50'],
-  ['M51', 'spindle override control. P0 turns it off.', LC_M + 'm51'],
-  ['M53', 'feed hold control. P0 turns it off.', LC_M + 'm53'],
-  ['M61', 'set the current tool number to Q. No change.', LC_M + 'm61'],
-  ['M70 M71', 'save the modal state / invalidate the saved one.', LC_M + 'm70'],
-  ['M72 M73', 'restore it / save with automatic restore.', LC_M + 'm72'],
   ['M98', 'call macro P<n>.macro off the card. n is 100+.', LC_M + 'm98-m99'],
   ['', 'An O<n> sub in the same file wants $700=1.'],
   ['M99', 'return from that sub.', LC_M + 'm98-m99'],
@@ -456,6 +449,22 @@ const M_CODES = [
   ['M97', 'HAAS sub: run N<p> to M99, L times. Off the card'],
   ['', 'only — a streamed job has no file to seek in.']
 ]
+
+/**
+ * Break a sentence into lines that fit the pane's text column. A word longer
+ * than the column overhangs on a line of its own rather than being cut — the
+ * codes and offsets in these messages are the part that must stay readable.
+ */
+function wrapText (text, width) {
+  const out = ['']
+  for (const word of text.split(/\s+/)) {
+    const at = out.length - 1
+    if (!out[at]) out[at] = word
+    else if (out[at].length + 1 + word.length <= width) out[at] += ' ' + word
+    else out.push(word)
+  }
+  return out
+}
 
 /**
  * Codes the parser knows and this machine still refuses, which is the pair a
@@ -471,7 +480,18 @@ const REFUSED = [
   ['G95', 'feed per revolution needs that encoder too.', LC_G + 'g93-g94-g95'],
   ['G61.1 G64', 'exact stop and blending are not in this build.', LC_G + 'g64'],
   ['M56', 'parking override control. Parking is not on.'],
-  ['M62-M68', 'digital and analogue I/O: no ports registered.', HAL_PLUGIN]
+  ['M62-M68', 'digital and analogue I/O: no ports registered.', HAL_PLUGIN],
+  ['', ''],
+  ['', 'The rest are refused for the opposite reason: this'],
+  ['', 'machine WOULD run them, under a meaning the 2014'],
+  ['', 'manual gives to something else. Printed from the'],
+  ['', 'same table that stops them, so the page cannot drift'],
+  ['', 'from the control.'],
+  ['', ''],
+  // One entry per collision, wrapped into the pane's text column. Nothing here
+  // is written twice: edit HAAS_COLLISIONS and this list follows.
+  ...HAAS_COLLISIONS.flatMap(([label, , why]) =>
+    wrapText(why, 52).map((line, i) => [i ? '' : label, line]))
 ]
 
 /** A section rule, drawn to the width the pane's text column already uses. */

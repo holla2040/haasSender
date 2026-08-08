@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, paneFrom } from '../src/ui/screen.js'
+import { wireLine, HAAS_COLLISIONS } from '../src/grbl.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
 // keeps showing its last value after the link drops is the same lie as a
@@ -66,6 +67,27 @@ test('no g-code or m-code is listed twice, and every line fits the pane', () => 
     // Entities are one glyph on screen however many characters they are here.
     assert.ok(label.padEnd(14).length + text.replace(/&#\d+;/g, 'x').length <= 70,
       `"${label}" line is wider than the pane`)
+  }
+})
+
+// The drift this guards against is the one a student pays for: HELP said M50 was
+// feed override control, the block ran, and an override they never touched went
+// off. HELP and the wire read the same table now, and this proves it stays that
+// way for codes added later too — not just the ones known to collide today.
+test('every code HELP says this machine RUNS survives the wire', () => {
+  const runs = HELP.slice(HELP_SECTIONS[1], HELP_SECTIONS[3])
+  const codes = runs.flatMap(([label]) => label.split(/\s+/)).filter(c => /^[GM][\d.]+$/.test(c))
+  assert.ok(codes.length > 40, 'the runnable code list lost most of its entries')
+  for (const code of codes) {
+    assert.doesNotThrow(() => wireLine(code, {}),
+      `HELP lists ${code} as runnable, but the wire refuses it`)
+  }
+})
+
+test('every colliding code is on the refused list, and named there', () => {
+  const refused = HELP.slice(HELP_SECTIONS[3]).map(([label]) => label)
+  for (const [label] of HAAS_COLLISIONS) {
+    assert.ok(refused.includes(label), `${label} collides but HELP never says so`)
   }
 })
 

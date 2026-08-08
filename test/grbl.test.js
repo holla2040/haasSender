@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import * as grblNS from '../src/grbl.js'
-import { wireLine, WireError, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, parseOWord, describeSetting, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
+import { wireLine, WireError, homeG28, parseStatus, parseFeedback, rxBufferFromOpt, Streamer, prepare, parseONumber, parseOWord, describeSetting, wireProgram, toolsUsed, words, editBlock, modalGroups, WCS, setWorkOffset, distanceToGo } from '../src/grbl.js'
 
 // Captured verbatim from the ClearCore at 192.168.0.113.
 const REAL_STATUS =
@@ -548,6 +548,75 @@ test('HAAS G51 P translates to the MACH3 factor form; centre forms pass through'
 test('a P-less HAAS G86 gains P0 on the wire — grblHAL requires the dwell word', () => {
   assert.deepEqual(wireLine('G86 Z-2. R1. F500.', {}), ['G86 P0 Z-2. R1. F500.'])
   assert.deepEqual(wireLine('G86 P0.1 Z-2. R1. F500.', {}), ['G86 P0.1 Z-2. R1. F500.'])
+})
+
+// The codes grblHAL ACCEPTS under a meaning the 2014 manual gives to something
+// else. A rejection a student can read beats an `ok` that hid an override
+// switching itself off, so none of these may reach the wire on any path.
+test('a code that grbl would run under a different HAAS meaning never reaches the wire', () => {
+  const refused = [
+    ['M48', /pallet program check/i], ['M49', /pallet/i],
+    ['M50', /pallet change and user relays/i], ['M51 P0', /user relays/i], ['M53 P0', /user relays/i],
+    ['M60', /not a mill code/i], ['M61 Q5', /current tool number/i],
+    ['M70', /modal state/i], ['M73', /modal state/i],
+    ['G28.1', /machine zero/i], ['G30.1', /machine zero/i],
+    ['G10 L11 P5 Z2.5', /G10 L11/],
+    ['G10 L1 P5 R2.5', /G10 L1 with R/], ['R2.5 P5 L1 G10', /G10 L1 with R/]
+  ]
+  for (const [block, why] of refused) {
+    assert.throws(() => wireLine(block, {}), WireError, `${block} should be refused`)
+    assert.throws(() => wireLine(block, {}), why, `${block} should say why`)
+  }
+})
+
+// The other half of the same rule: refusing too much is its own failure. The
+// sender itself sends G10 L1 and G10 L2, and M5/M9/M7 live next door to the band.
+test('the collision table does not catch the codes either side of it', () => {
+  const fine = [
+    'G10 L2 P1 X0 Y0', 'G10 L20 P1 X0', 'G10 L1 P5 Z-25.4',
+    'G10 L10 P5 R2.5', 'R2.5 P5 L10 G10',
+    'G2 X1 Y1 R5', 'G83 Z-1 R0.1 Q0.2 F10',                    // an R that is not a G10 R
+    'M5', 'M9', 'M7', 'M8', 'M52', 'M54', 'M59', 'M62 P0',     // grbl errors these honestly
+    'G28', 'G30', 'G28 G91 Z0', 'G100', 'G101', 'M6', 'M30'
+  ]
+  for (const block of fine) assert.doesNotThrow(() => wireLine(block, {}), `${block} must go through`)
+})
+
+test('HOME G28 selects one axis without an intermediate move and restores G90', () => {
+  assert.deepEqual(homeG28(), ['G28'])
+  assert.deepEqual(homeG28('z', false), ['G91 G28 Z0', 'G90'])
+  assert.deepEqual(homeG28('A', true), ['G28 A0'])
+  assert.throws(() => homeG28('XY'), /accepts one axis/)
+})
+
+test('HAAS-only built-ins fail closed on firmware without the parity plugin', () => {
+  assert.throws(() => wireLine('G28', { caps: { haas: false } }), /parity v0.2/)
+  assert.throws(() => wireLine('G10 L10 P5 R2.5', { caps: { haas: false } }), /parity v0.2/)
+  assert.throws(() => wireLine('M00', { caps: { haas: false } }), /parity v0.2/)
+  assert.throws(() => wireLine('M30', { caps: { haas: false } }), /parity v0.2/)
+  assert.deepEqual(wireLine('M01', { caps: { haas: false } }), ['M01'])
+  assert.deepEqual(wireLine('M02', { caps: { haas: false } }), ['M02'])
+  assert.deepEqual(wireLine('G28', { caps: { haas: true } }), ['G28'])
+})
+
+test('wireProgram reports the actual program terminator for the M30 counter', () => {
+  assert.equal(wireProgram(prepare('G0 X1\nM30'), {}).endedBy, 30)
+  assert.equal(wireProgram(prepare('G0 X1\nM2'), {}).endedBy, 2)
+  assert.equal(wireProgram(prepare('G0 X1'), {}).endedBy, null)
+})
+
+test('a refused collision names the block it is on, and stops the whole program', () => {
+  const lines = prepare('O0001\nG0 X1\nM51 P0\nG0 X2')
+  assert.throws(() => wireProgram(lines, {}), /line 3:.*M50 M51 M53/)
+  // Refused BEFORE the wire: nothing from the program is left half-sent.
+  assert.throws(() => wireProgram(lines, {}), WireError)
+})
+
+// A comment is not a command — the manual's own text says "M61 clears relay 1",
+// and a student pasting that into a note must not have the program refused.
+test('a collision code inside a comment is not a command', () => {
+  assert.deepEqual(wireProgram(prepare('G0 X1 (M61 clears relay 1)\nG0 X2'), {}).wire,
+    ['G0 X1', 'G0 X2'])
 })
 
 test('haasNote explains the HAAS meaning of rejected codes, and stays quiet otherwise', () => {

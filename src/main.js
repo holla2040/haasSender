@@ -1,6 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, homeG28, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, PANE_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
@@ -83,7 +83,7 @@ const s = {
   // `expr` is EXPR in NEWOPT. `runSwitches` is true for every current transport
   // (grblHAL and the sim); it exists so a classic-grbl serial board can fall
   // back to sender-side stripping the day Web Serial is bench-tested.
-  caps: { runSwitches: true, toolTable: false, expr: false }, optSynced: false,
+  caps: { runSwitches: true, toolTable: false, expr: false, haas: false }, optSynced: false,
   program: { o: '', name: '', lines: [], current: 0 },
   job: null, plannerSize: 100,
   // The timers pane. `cycleStartedAt` is wall-clock rather than a tick count so a
@@ -415,11 +415,22 @@ function press (id) {
       s.mode = 'SETUP'; s.fn = 'ZERO'
       s.message = 'POWER UP RESTART — homing (untested on this machine, no limit switches fitted)'
       return send('$H')
-    // G28 needs no limit switches: it is a move to a stored position, not a
-    // homing search. Watched returning the machine from X15 Y8 Z12 to zero.
     case 'zero-home':
-      s.message = 'returning to the G28 position'
-      return send('G28')
+      if (!s.caps.haas) {
+        s.message = 'HOME G28 requires the paired HAAS parity v0.2 firmware'
+        return invalidate()
+      }
+      try {
+        const typed = s.input.trim().toUpperCase()
+        const commands = homeG28(typed || null, /\bG91\b/.test(s.modal ?? ''))
+        s.input = ''
+        s.message = typed ? `returning ${typed} to machine zero` : 'returning all axes to machine zero'
+        return send(commands.join('\n'))
+      } catch (e) {
+        if (!(e instanceof WireError)) throw e
+        s.message = e.message
+        return invalidate()
+      }
     case 'zero-single':
       // A HAAS homes one axis at a time here, and asks which. grblHAL takes the
       // axis letter after `$H`.
@@ -1417,9 +1428,9 @@ function cycleStart () {
   // at the source line, which a switch that removes blocks would otherwise skew.
   // M97/M98/G65 are expanded here; a program that cannot stream faithfully
   // (M99 loop, missing sub, macro arguments) refuses with the reason.
-  let wire, rows
+  let wire, rows, endedBy
   try {
-    ({ wire, rows } = wireProgram(run.lines, {
+    ({ wire, rows, endedBy } = wireProgram(run.lines, {
       ...s, getProgram: programByNumber, dryRunFeed: DRY_RUN_FEED[s.units][s.incIndex]
     }))
   } catch (e) {
@@ -1458,7 +1469,7 @@ function cycleStart () {
   // highlight, and the DRO is what an operator actually watches.
   if (!isMdi) { s.mode = 'OPERATION'; s.fn = 'MEM'; s.activePane = 'position' }
   s.cycleStartedAt = Date.now(); s.cycleMs = 0
-  s.job = { sentAll: false, rows, prog: run, mdi: isMdi }
+  s.job = { sentAll: false, rows, prog: run, mdi: isMdi, m30: endedBy === 30 }
   streamer.setSingleBlock(s.singleBlock)
   streamer.start(wire)
   if (s.singleBlock) streamer.release()
@@ -1576,6 +1587,8 @@ function onLine (line) {
     s.caps.toolTable = (opt.tools ?? 0) > 0
   } else if (fb.kind === 'NEWOPT') {
     s.caps.expr = /\bEXPR\b/.test(String(fb.value))
+  } else if (fb.kind === 'PLUGIN' && /^HAAS parity v0\.2\b/.test(String(fb.value))) {
+    s.caps.haas = true
   } else if (fb.kind === 'GC') {
     s.modal = fb.value
     s.units = /\bG20\b/.test(fb.value) ? 'IN' : 'MM'
@@ -1606,6 +1619,10 @@ function onLine (line) {
   } else if (/^G5[4-9](\.[1-3])?$/.test(fb.kind)) {
     s.offsets = { ...s.offsets, [fb.kind]: fb.value }
   } else if (fb.kind === 'MSG') {
+    // The HAAS firmware emits this before an SD/DNC M30 completes. Streamed
+    // jobs already carry their parsed terminator; this closes the path where the
+    // board owns the file and the browser cannot inspect its last block.
+    if (fb.value === 'HAAS:M30' && s.job) s.job.m30 = true
     s.message = fb.value
   }
   invalidate()
@@ -1656,7 +1673,7 @@ function applyStatus (st) {
   }
 
   if (s.job?.sentAll && st.state === 'Idle') {
-    const { prog, mdi } = s.job
+    const { prog, mdi, m30 } = s.job
     s.job = null
     s.message = mdi ? 'MDI complete' : 'program complete'
     if (prog) prog.current = 0
@@ -1664,7 +1681,10 @@ function applyStatus (st) {
     // actually watches. Only a completed cycle counts — one stopped by RESET
     // clears the timer without incrementing anything, and a handful of blocks
     // typed into MDI is not a part either: that pane is labelled M30 CNT.
-    if (!mdi) { s.lastCycleMs = s.cycleMs; s.parts++ }
+    if (!mdi) {
+      s.lastCycleMs = s.cycleMs
+      if (m30) s.parts++
+    }
     s.cycleStartedAt = null
     // A program can leave the modal state, the work offsets and the tool length
     // offset anywhere at all. Re-read rather than assume they survived the cycle.
@@ -1740,7 +1760,7 @@ async function connect () {
         : simTransport()
 
     // A new connection is a new firmware: relearn what it can do.
-    s.caps = { runSwitches: true, toolTable: false, expr: false }
+    s.caps = { runSwitches: true, toolTable: false, expr: false, haas: false }
     s.optSynced = false
 
     link.onLine(onLine)

@@ -207,6 +207,56 @@ export const describeError = (n) => ERRORS[n] || `Unrecognized error ${n}.`
 export const describeAlarm = (n) => ALARMS[n] || `Unrecognized alarm ${n}.`
 
 /**
+ * Codes grblHAL runs happily under a name the 2014 manual gives to something
+ * else. These are the dangerous ones: not a code the machine refuses — a
+ * student can read that error and learn from it — but a code that is ACCEPTED
+ * and quietly does a different job. `M51 P0` reads as "user relay 1" out of the
+ * manual and lands as "spindle override off" on this machine, with an `ok` that
+ * says nothing happened wrong.
+ *
+ * So they are refused before they reach the wire, and the HELP page prints its
+ * "codes it will refuse" list from this same table: the page and the parser
+ * cannot disagree about a code when there is only one place the answer lives.
+ *
+ * `[label, regex, why]` — the label is what HELP shows and what the error names,
+ * the regex matches a comment-stripped block, `why` is the sentence a student
+ * reads in both places. It follows the code name in each, so it is written to
+ * read on from one: "M61" + "the user relay 1 clear on a HAAS". Keep it a noun
+ * phrase and it reads the same after one code name or three. Only codes the 2014
+ * manual documents, and every HAAS meaning here comes off its manual page — this
+ * table must never invent one.
+ */
+export const HAAS_COLLISIONS = [
+  ['M48 M49', /\bM0*4[89]\b/i,
+    'the pallet program check and pallet status codes on a HAAS (pp.328-329). Grbl reads them as override enable and disable instead.'],
+  ['M50 M51 M53', /\bM0*5[013]\b/i,
+    'a pallet change and user relays 1 and 3 on a HAAS (pp.329-330). Grbl reads all three as override controls.'],
+  ['M60', /\bM0*60\b/i,
+    'not a mill code in the 2014 HAAS manual. Grbl would treat it as a pallet-shuttle program end.'],
+  ['M61', /\bM0*61\b/i,
+    'the user relay 1 clear on a HAAS (p.330). Grbl would set the current tool number from Q instead.'],
+  ['M70-M73', /\bM0*7[0-3]\b/i,
+    'not mill codes in the 2014 manual at all. Grbl saves and restores modal state under them.'],
+  ['G28.1 G30.1', /\bG0*(?:28|30)\.1\b/i,
+    'grbl housekeeping — they overwrite where G28 and G30 go. Not HAAS codes, and kept off the wire so nothing can move machine zero.'],
+  // L10/R is deliberately absent: the haasSender firmware and simulator
+  // implement the HAAS tool-length write. L11 and a native L1/R radius write do
+  // not have that contract and stay out of the student-facing language.
+  ['G10 L11', /^(?=.*\bG0*10\b)(?=.*\bL0*11\b)/i,
+    'not implemented by this trainer. Use the documented HAAS G10 L10 Pn Rvalue tool-length form.'],
+  ['G10 L1 with R', /^(?=.*\bG0*10\b)(?=.*\bL0*1\b)(?=.*\bR[-+.\d])/i,
+    'a grbl tool-radius maintenance form, not the HAAS tool-length command. Use G10 L10 Pn Rvalue.']
+]
+
+/**
+ * The collision this block walks into, or null. Checked against a block with its
+ * comments already stripped, so `(M61 clears the relay)` in a note is not a
+ * command. First match wins.
+ */
+export const haasCollision = (text) =>
+  HAAS_COLLISIONS.find(([, re]) => re.test(text ?? '')) ?? null
+
+/**
  * What the STUDENT'S code meant, when this stack rejects it. "error 20" is
  * true and teaches nothing; "G12 is Circular Pocket Milling on a HAAS — mill
  * it with G2/G3" is what a student at a real control would eventually work
@@ -240,10 +290,10 @@ const HAAS_NOTES = [
   [/\bM0*3[45]\b/i, 'M34/M35 move the P-Cool spigot — no programmable coolant fitted.'],
   [/\bM0*39\b/i, 'M39 rotates the tool turret — no tool changer fitted.'],
   [/\bM0*4[12]\b/i, 'M41/M42 are spindle gear overrides — this spindle has no gearbox.'],
-  [/\bM0*4[89]\b|\bM0*5\d\b/i, 'M48-M59 are program-check, pallet and relay codes this machine does not have.'],
-  // M61 is not in this range: grblHAL implements it as "set current tool", and it
-  // works here — a student whose M61 was rejected for a missing Q word must not be
-  // told the machine has no pin for it. HELP lists it under the codes that run.
+  // M48-M51, M53, M60 and M61 are not here: grblHAL ACCEPTS those with a
+  // different meaning, so a note on the board's error would never print. They
+  // live in HAAS_COLLISIONS and never reach the wire at all.
+  [/\bM0*5[24-9]\b/i, 'M52 and M54-M59 are pallet and relay codes this machine does not have.'],
   [/\bM0*6[2-9]\b/i, 'M62-M69 user I/O: every output pin on this controller is already spoken for.'],
   [/\bM0*7[589]\b/i, 'M75/M78/M79 are probing codes — no probe system fitted.'],
   [/\bM0*8[0-7]\b/i, 'M80-M87 drive doors, air guns and tool clamps — none fitted.'],
@@ -251,8 +301,16 @@ const HAAS_NOTES = [
   [/\bM109\b/i, 'M109 interactive input needs the macro system — not built here.']
 ]
 
-/** The HAAS-aware half of an error message, or null when the line has no story. */
+/**
+ * The HAAS-aware half of an error message, or null when the line has no story.
+ *
+ * Collisions are consulted too. A block that reached the board through some
+ * path this sender does not own — a file the board runs off its own card — can
+ * still come back as an error, and the answer to "why" is the same sentence.
+ */
 export function haasNote (text) {
+  const hit = haasCollision(text)
+  if (hit) return `${hit[0]} refused: ${hit[2]}`
   for (const [re, note] of HAAS_NOTES) if (re.test(text ?? '')) return note
   return null
 }
@@ -492,6 +550,18 @@ export const stripComments = (text) =>
 export class WireError extends Error {}
 
 /**
+ * HOME G28's typed-axis form without an intermediate move. G91 makes the axis
+ * word a zero-distance first leg; G90 is restored when it was the entering mode.
+ * The target firmware supplies the HAAS final leg and G49 semantics.
+ */
+export function homeG28 (axis = null, incremental = false) {
+  if (axis === null) return ['G28']
+  const a = String(axis).trim().toUpperCase()
+  if (!/^[XYZA]$/.test(a)) throw new WireError('HOME G28 accepts one axis: X, Y, Z or A')
+  return incremental ? [`G28 ${a}0`] : [`G91 G28 ${a}0`, 'G90']
+}
+
+/**
  * The per-line dialect translation between what a HAAS program says and what
  * this firmware speaks — shared by CYCLE START and MDI, because a typed block
  * and a program block must reach the machine in the same language. Returns the
@@ -499,6 +569,24 @@ export class WireError extends Error {}
  */
 export function wireLine (t, { tools = {}, caps = {} } = {}) {
   const out = []
+
+  // First, before a single translation runs: a code this firmware would accept
+  // under a meaning the manual gives to something else never goes out. Refusing
+  // costs a student one error message; passing it costs them an override they
+  // did not switch, a tool number they did not change, or a moved machine zero.
+  const clash = haasCollision(t)
+  if (clash) throw new WireError(`${clash[0]} refused: ${clash[2]}`)
+
+  // Bare G28, HAAS L10, M00 cleanup and M30 cleanup depend on the paired branch
+  // firmware changing grblHAL's built-in meanings. A stock controller must fail
+  // closed rather than accept the same text under the semantics this
+  // compatibility layer was created to eliminate. Undefined is allowed for
+  // pure/unit use; a connected sender explicitly starts false and learns v0.2
+  // from $I.
+  if (caps.haas === false && (/\bG0*28\b(?![.\d])/i.test(t) ||
+      /^(?=.*\bG0*10\b)(?=.*\bL0*10\b)/i.test(t) ||
+      /\bM0*(?:0|30)\b/i.test(t)))
+    throw new WireError('HAAS G28/G10 L10/M00/M30 requires the paired HAAS parity v0.2 firmware')
 
   // HAAS G04: an integer P is milliseconds, a decimal P is seconds — manual
   // p.245: "G04 P10. is a dwell of 10 seconds; G04 P10 is 10 milliseconds".
@@ -578,6 +666,7 @@ export function wireProgram (lines, {
 } = {}) {
   const wire = []
   const rows = []
+  let endedBy = null
   const push = (text, row) => { wire.push(text); rows.push(row) }
   const err = (msg) => { throw new WireError(msg) }
 
@@ -664,17 +753,25 @@ export function wireProgram (lines, {
         else if (stickyP !== null) t = t.replace(/\bG0*(8[269])\b(?![.\d])/i, (_, c) => `G${c} P${stickyP}`)
       } else if (/\bG0*[01]\b(?![.\d])|\bG80\b(?![.\d])/i.test(t)) stickyP = null
 
-      for (const out of wireLine(t, { tools, caps })) push(slashed ? '/' + out : out, rowOverride ?? i)
+      try {
+        for (const out of wireLine(t, { tools, caps })) push(slashed ? '/' + out : out, rowOverride ?? i)
+      } catch (e) {
+        if (!(e instanceof WireError)) throw e
+        err(`line ${l.n}: ${e.message}`)   // which block, in a program of hundreds
+      }
 
       // M30/M02 end the program: nothing after them streams — which is also
       // what hides the M97 subprogram bodies the manual places after the M30.
-      if (!inSub && /\bM0*(2|30)\b/i.test(t)) return
+      if (!inSub) {
+        const end = /\bM0*(2|30)\b/i.exec(t)
+        if (end) { endedBy = Number(end[1]); return }
+      }
     }
     if (inSub) err('subprogram ran off the end of the program without an M99')
   }
 
   emitFrom(lines, 0, 0, null, false)
-  return { wire, rows }
+  return { wire, rows, endedBy }
 }
 
 // --------------------------------------------------------------- modal state
