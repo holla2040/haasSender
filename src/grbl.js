@@ -186,6 +186,7 @@ export const ERRORS = {
   26: 'No axis words found in block for g-code command that requires them.',
   33: 'Motion command target is invalid.',
   34: 'Arc radius value is invalid.',
+  35: 'G2/G3 arcs require at least one in-plane offset word.',
   36: 'No axis words found in block while no command is present.',
   38: 'Tool number greater than max supported value.'
 }

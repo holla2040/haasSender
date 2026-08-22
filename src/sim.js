@@ -30,6 +30,48 @@ const MOTION_GROUP = new Set([0, 1, 2, 3, 73, 80, 81, 82, 83, 85, 86, 89])
 const CYCLES = new Set([73, 81, 82, 83, 85, 86, 89])
 const N_SIM_TOOLS = 32     // matches N_TOOLS on the branch firmware
 
+/**
+ * Every point the tool would pass through, without running the clock.
+ *
+ * The planner queue already holds the whole program as targets — that IS the
+ * polyline — so a preview costs one pass over the blocks instead of a simulated
+ * cycle time. Points are `[x, y, rapid]` in machine millimetres, starting at
+ * machine zero because that is where the machine starts.
+ *
+ * `err` is the first line the simulator refused with, or null. A rejected block
+ * stops the drawing there, which is the honest picture: the machine would not
+ * have gone any further either.
+ */
+export function toolPath (wire, opts) {
+  const m = new VirtualGrbl(opts)
+  let err = null
+  m.onLine(l => { if (!err && /^(error:|ALARM:)/.test(l)) err = l })
+
+  const pts = [[0, 0, true]]
+  let seen = 0                   // blocks already taken off the planner
+  const harvest = () => {
+    for (; seen < m.queue.length; seen++) {
+      const b = m.queue[seen]
+      for (const step of b.path ?? [{ target: b.target, rapid: b.rapid }]) {
+        if (step.target) pts.push([step.target[0], step.target[1], !!step.rapid])
+      }
+    }
+  }
+
+  // A block at a time, and read the planner after each one. An alarm FLUSHES the
+  // planner, exactly as it does on the machine, so a program that runs off the
+  // table would otherwise erase the drawing that shows where it did it. The
+  // queue is never spliced: `plannedEnd()` reads it to find where the last move
+  // left the tool, and emptying it would restart every block from machine zero.
+  for (const line of wire) {
+    m.write(line + '\n')
+    m.drain()                    // the outbox is only delivered on a drain
+    harvest()
+    if (err) break
+  }
+  return { pts, err, blocks: seen }
+}
+
 export class VirtualGrbl {
   constructor ({ rapidRate = 5000, maxTravel = [500, 400, 300, 360] } = {}) {
     this.rapidRate = rapidRate          // mm/min
@@ -75,6 +117,7 @@ export class VirtualGrbl {
     this.g92 = zero()
     this.tloZ = 0                       // active tool length offset, mm
     this.motionMode = 0
+    this.plane = 0                      // G17 XY; 1 is G18 ZX, 2 is G19 YZ
     this.invTime = false                // G93
     this.retract98 = true               // G98 initial-point return
     this.cycle = null                   // sticky canned-cycle state
@@ -338,7 +381,7 @@ export class VirtualGrbl {
     const snap = {
       inches: this.inches, absolute: this.absolute, wcs: this.wcs,
       tloZ: this.tloZ, invTime: this.invTime, retract98: this.retract98,
-      motionMode: this.motionMode, feed: this.feed, g92: [...this.g92],
+      motionMode: this.motionMode, feed: this.feed, g92: [...this.g92], plane: this.plane,
       scaling: this.scaling, cycle: this.cycle ? { ...this.cycle } : null,
       pendingTool: this.pendingTool
     }
@@ -361,6 +404,9 @@ export class VirtualGrbl {
       else if (v === 21) this.inches = false
       else if (v === 90) this.absolute = true
       else if (v === 91) this.absolute = false
+      else if (v === 17) this.plane = 0
+      else if (v === 18) this.plane = 1
+      else if (v === 19) this.plane = 2
       else if (v === 93) this.invTime = true
       else if (v === 94) this.invTime = false
       else if (v === 98) this.retract98 = true
@@ -568,26 +614,40 @@ export class VirtualGrbl {
         this.cycle = null              // G00/G01 (and arcs) cancel a canned cycle, manual p.235
       }
 
-      if (motion === 2 || motion === 3) {
-        // ponytail: arcs travel straight to their endpoint — operator training,
-        // not toolpath preview. I/J/K/R are accepted and ignored.
-        w.delete('I'); w.delete('J'); w.delete('K'); w.delete('R')
-      }
+      // An arc needs no axis words at all: `G2 I25` in G17 is a full circle back
+      // to where it started, and the old `axis.size` gate dropped it silently.
+      const arc = motion === 2 || motion === 3
 
-      if (axis.size) {
+      if (axis.size || arc) {
         const base = this.plannedEnd()
         const target = base.map((v, i) => !axis.has(i) ? v
           : abs ? toMach(i, scaleAbs(i, axis.get(i))) : v + conv(scaleInc(i, axis.get(i))))
         axis.clear()
 
-        if (target.some((v, i) => Math.abs(v) > this.maxTravel[i])) return this.raiseAlarm(2)
         if (motion !== 0 && this.feed <= 0) return fail('error:22')
 
-        const dist = Math.hypot(...target.map((t, i) => t - this.plannedEnd()[i]))
+        // The whole move as a list of targets: one for a straight line, a run of
+        // short chords for an arc. Everything past here — soft limits, feedrate,
+        // the planner, the graphics plot — treats the two the same.
+        let targets = [target]
+        if (arc) {
+          const got = this.arcTargets(base, target, w, motion === 2, conv)
+          if (got.err) return fail(got.err)
+          targets = got.targets
+        }
+
+        // Every chord, not just the endpoint: an arc bulges, and the bulge is
+        // what leaves the envelope on a program whose start and end do not.
+        for (const t of targets)
+          if (t.some((v, i) => Math.abs(v) > this.maxTravel[i])) return this.raiseAlarm(2)
+
+        let dist = 0
+        let from = base
+        for (const t of targets) { dist += Math.hypot(...t.map((v, i) => v - from[i])); from = t }
         const rate = motion === 0 ? this.rapidRate
           : this.invTime ? Math.max(1, dist * this.feed)   // G93: F = 1/minutes
           : this.feed
-        path.push({ target, rate, rapid: motion === 0 })
+        for (const t of targets) path.push({ target: t, rate, rapid: motion === 0 })
       }
     }
 
@@ -633,6 +693,88 @@ export class VirtualGrbl {
     // planner is full so the streamer actually has something to push against.
     if (this.queue.length < PLANNER) this.emit('ok')
     else this.owedOks++
+  }
+
+  /**
+   * A G2/G3 as the run of short chords the machine actually travels.
+   *
+   * The old version drove straight to the endpoint and threw I/J/K/R away, which
+   * is invisible while you are teaching operator workflow and a lie the moment
+   * anything DRAWS the path: a bolt circle came out a polygon. Chord sagitta is
+   * held to 0.01 mm, so the segment count follows the radius instead of a
+   * constant that would be coarse on a big arc and wasteful on a small one.
+   *
+   * Returns `{ targets }` in machine coordinates, or `{ err }` with the code the
+   * board would answer. Offsets are incremental from the start point — the only
+   * form the Classic teaches, and G90.1 is not in G_SUPPORTED.
+   *
+   * ponytail: G51 scaling does not reach the offsets, so a scaled arc keeps its
+   * true radius. Scale them the day a lesson needs a scaled arc, not before.
+   */
+  arcTargets (start, end, w, cw, conv) {
+    // grbl's plane axis order. The same math serves all three planes only if G18
+    // is read as (Z,X) rather than (X,Z) — that ordering is what keeps G2 meaning
+    // clockwise as seen from the positive end of the axis left over.
+    const [a, b] = [[0, 1], [2, 0], [1, 2]][this.plane]
+    const oa = 'IJK'[a], ob = 'IJK'[b]
+    let ca, cb, r
+
+    if (w.has('R')) {
+      if (w.has(oa) || w.has(ob)) return { err: 'error:33' }   // R or offsets, not both
+      r = conv(w.get('R')); w.delete('R')
+      const dx = end[a] - start[a]
+      const dy = end[b] - start[b]
+      const d = Math.hypot(dx, dy)
+      // A full circle has no chord to hang a radius on, so R cannot describe one.
+      if (d === 0) return { err: 'error:33' }
+      let h = 4 * r * r - dx * dx - dy * dy
+      if (h < 0) return { err: 'error:34' }     // no circle that small reaches the endpoint
+      h = -Math.sqrt(h) / d
+      if (!cw) h = -h
+      if (r < 0) { h = -h; r = -r }             // negative R picks the major arc
+      ca = 0.5 * (dx - dy * h)
+      cb = 0.5 * (dy + dx * h)
+    } else {
+      if (!w.has(oa) && !w.has(ob)) return { err: 'error:35' }
+      ca = w.has(oa) ? conv(w.get(oa)) : 0
+      cb = w.has(ob) ? conv(w.get(ob)) : 0
+      w.delete(oa); w.delete(ob)
+      r = Math.hypot(ca, cb)
+      // The endpoint has to sit on the same circle as the start. Real controls
+      // check this because a mistyped J is otherwise a spiral nobody asked for.
+      const rEnd = Math.hypot(end[a] - start[a] - ca, end[b] - start[b] - cb)
+      if (Math.abs(rEnd - r) > Math.max(0.005, r * 0.002)) return { err: 'error:33' }
+    }
+    if (r < 1e-6) return { err: 'error:33' }
+
+    const cA = start[a] + ca
+    const cB = start[b] + cb
+    // Both angles measured the same way, off the same centre. Writing the start
+    // as atan2(-cb, -ca) looks equivalent and is not: a J0 arrives as negative
+    // zero, which puts the start on -pi and the end on +pi, and a full circle
+    // came out as a zero-length move that drew nothing.
+    const t0 = Math.atan2(start[b] - cB, start[a] - cA)
+    let sweep = Math.atan2(end[b] - cB, end[a] - cA) - t0
+    // atan2 lands the difference in (-2pi, 2pi), so one nudge is enough to put it
+    // on the commanded side. Exactly zero is the full circle, not a no-op.
+    if (cw && sweep >= 0) sweep -= 2 * Math.PI
+    if (!cw && sweep <= 0) sweep += 2 * Math.PI
+
+    const per = 2 * Math.acos(Math.max(-1, 1 - 0.01 / r))
+    const n = Math.min(600, Math.max(2, Math.ceil(Math.abs(sweep) / per)))
+    const targets = []
+    for (let k = 1; k < n; k++) {
+      const f = k / n
+      const th = t0 + sweep * f
+      // Anything not in the plane rides along linearly: that is a helix, and on
+      // this control it is also how A gets to the end of an arc.
+      const t = start.map((v, i) => v + (end[i] - v) * f)
+      t[a] = cA + r * Math.cos(th)
+      t[b] = cB + r * Math.sin(th)
+      targets.push(t)
+    }
+    targets.push([...end])          // land on the commanded point, not on a cosine
+    return { targets }
   }
 
   jog (spec) {

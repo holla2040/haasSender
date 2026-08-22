@@ -1,5 +1,6 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
+import { toolPath } from './sim.js'
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, homeG28, toolsUsed, stripComments, words, editBlock, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, PANE_ROWS, PROGRAM_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
@@ -105,7 +106,7 @@ const s = {
   // on it until it is deleted, CYCLE START runs it, and the same editor keys that
   // work on a program work on it. Same shape as `program` for exactly that reason
   // — one editor, one CYCLE START, two things they can point at.
-  mdi: blankMdi(), alarms: [], shifted: false,
+  mdi: blankMdi(), alarms: [], shifted: false, plot: null,
   // The machine's own settings, as `$$` reports them. Read-only here: writing a
   // setting is a different kind of act from writing a work offset.
   settings: {}, paramRow: 0,
@@ -197,6 +198,14 @@ function press (id) {
     const pane = MODES[id].activePane
     if (pane && pane !== s.activePane) { s.editRow = 0; s.editWord = 0; s.undoStack = [] }
     Object.assign(s, MODES[id])
+    return invalidate()
+  }
+
+  // §3.8: SETTING/GRAPHIC carries two pages, and the manual's step 1 is "press
+  // [SETTING/GRAPHIC] until the GRAPHICS page is displayed". Pressing it on the
+  // graphics page falls through to DISPLAY_PANES and lands back on SETTING.
+  if (id === 'page-setting' && s.activePane === 'setting') {
+    s.activePane = 'graphics'
     return invalidate()
   }
 
@@ -638,6 +647,42 @@ function modalS () {
   return v > 0 ? v : null
 }
 
+// -------------------------------------------------------------------- graphics
+
+/**
+ * §3.8 Graphics Mode: run the program without moving anything, and draw where the
+ * tool would have gone.
+ *
+ * The drawing comes off the simulator rather than a second g-code reader. It
+ * already knows G90/G91, units, work offsets, tool length, canned cycles and
+ * arcs, and it is the one the classroom seat runs against — a separate
+ * interpreter here would be a second opinion about what the program means, and
+ * the two would drift.
+ *
+ * Nothing is ticked. The planner queue holds every target the machine would pass
+ * through, which is the polyline, so the plot costs one pass over the program
+ * instead of a simulated cycle time.
+ *
+ * ponytail: work offsets are left at zero, so the picture is the SHAPE of the
+ * program and not where it sits on the table. Feed `$#` in the day the page
+ * grows a machine envelope to sit the shape inside.
+ */
+function plotWire (wire) {
+  // The machine's own declared envelope when it has told us — a program that
+  // leaves the table is a fault worth seeing here, on the page whose whole job
+  // is to find it before the tool does.
+  const travel = [0, 1, 2, 3].map(i => Number(s.settings[130 + i]))
+  s.plot = toolPath(wire, travel.every(v => v > 0) ? { maxTravel: travel } : {})
+
+  const err = s.plot.err
+  const n = err ? Number(err.slice(err.indexOf(':') + 1)) : 0
+  s.message = !err ? `${s.plot.blocks} blocks drawn — nothing moved`
+    : err.startsWith('ALARM:2') ? 'the program leaves the machine envelope — nothing past that point is drawn'
+    : err.startsWith('ALARM:') ? `${describeAlarm(n)} — the drawing stops there`
+    : `error ${n} — ${describeError(n)}. The drawing stops at that block`
+  return invalidate()
+}
+
 // --------------------------------------------------------------------- alarms
 
 /**
@@ -674,7 +719,13 @@ function logAlarm (kind, code, text, recovery) {
 const target = () => (s.activePane === 'mdi' ? s.mdi : s.program)
 
 /** Put a changed program back where it came from: the MDI page, or memory. */
-const setTarget = (prog) => { if (s.activePane === 'mdi') s.mdi = prog; else s.program = prog }
+// Editing the program (or undoing an edit) makes any drawing of it a picture of
+// something that no longer exists. Throw it away rather than leave the GRAPHICS
+// page quietly showing the last version — press CYCLE START again for this one.
+const setTarget = (prog) => {
+  s.plot = null
+  if (s.activePane === 'mdi') s.mdi = prog; else s.program = prog
+}
 
 /**
  * Is the program under the editor the one the machine is running?
@@ -1179,6 +1230,7 @@ function selectHighlighted () {
   const p = selected()
   if (!p) { s.message = 'no program to select'; return invalidate() }
   s.program = { o: p.o, name: p.name, lines: prepare(p.text), current: 0 }
+  s.plot = null                 // a different program, so not that drawing
   s.message = `${p.o} selected — ${s.program.lines.length} blocks`
   invalidate()
 }
@@ -1631,6 +1683,11 @@ function cycleStart () {
     s.message = 'every block is switched out — nothing to run'
     return invalidate()
   }
+
+  // §3.8: on the GRAPHICS page CYCLE START runs the program against a simulated
+  // machine and draws it. Same wire program as a real cycle — the same expanded
+  // subprograms, the same run switches — so what is drawn is what would be cut.
+  if (s.activePane === 'graphics') return plotWire(wire)
 
   // A program that asks for a tool offset nobody measured gets zero, which is the
   // one number certain to be wrong. Run anyway — refusing would be worse on a

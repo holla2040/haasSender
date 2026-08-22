@@ -613,3 +613,16 @@ body {
    underneath may be the highlighted running block, and a dim green on that
    amber is unreadable where a fade works on either ground. */
 .ln { opacity: .5; }
+
+/* The GRAPHICS page (§3.8). The plot takes what the pane has left under its
+   title; the extents line under it keeps its own row.
+
+   Strokes are `currentColor` so the drawing inverts with the pane — an active
+   pane goes white-on-dark to dark-on-white, and a hardcoded green path would be
+   the one thing on the screen that did not follow. `non-scaling-stroke` keeps
+   the line one pixel wide whether the program is 5 mm across or 500. */
+.pane-main svg.plot { flex: 1; min-height: 0; width: 100%; }
+.pane-main svg.plot path { fill: none; stroke: currentColor; vector-effect: non-scaling-stroke; }
+.pane-main svg.plot .feed  { stroke-width: 1.3; }
+.pane-main svg.plot .rapid { stroke-width: .9; stroke-dasharray: 4 4; opacity: .45; }
+.pane-main svg.plot .zero  { stroke-width: 1; opacity: .5; }

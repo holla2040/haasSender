@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { VirtualGrbl } from '../src/sim.js'
+import { VirtualGrbl, toolPath } from '../src/sim.js'
 import { Streamer, parseStatus, prepare, HAAS_COLLISIONS } from '../src/grbl.js'
 
 /**
@@ -475,4 +475,81 @@ test('a reset in motion alarms, a second reset does not clear it, $X does', () =
   write('$X\n')
   assert.equal(m.state, 'Idle')
   assert.equal(m.alarm, null)
+})
+
+/** Every point of the block's path, which is what the plot draws and the tool travels. */
+const pathOf = (m) => m.queue.at(-1).path.map(s => s.target)
+
+test('G2 traces the arc it was given, not the chord across it', () => {
+  const { m, write, run } = bench()
+  write('G21 G90 G17\nG0 X0 Y0\nG1 F600\nG2 X25 Y25 I25 J0\n')
+
+  const pts = pathOf(m)
+  assert.ok(pts.length > 20, `expected a segmented arc, got ${pts.length} point(s)`)
+  for (const [x, y] of pts) {
+    assert.ok(Math.abs(Math.hypot(x - 25, y - 0) - 25) < 0.02, `(${x},${y}) is off the circle`)
+  }
+  // Clockwise from the west point goes over the top, so the arc bulges into +Y.
+  assert.ok(pts.some(([x, y]) => y > 17 && x < 10), 'arc does not bulge the right way')
+  assert.deepEqual(pts.at(-1).slice(0, 2), [25, 25])
+
+  run(30)
+  assert.ok(Math.hypot(m.mpos[0] - 25, m.mpos[1] - 25) < 1e-6, `landed at ${m.mpos}`)
+})
+
+test('an arc with no axis words is a full circle, and R says which way round', () => {
+  const { m, write } = bench()
+  write('G21 G90 G17\nG1 F600\nG2 I25\n')          // full circle about X+25
+  const pts = pathOf(m)
+  assert.ok(Math.max(...pts.map(p => p[0])) > 49.9, 'circle never reaches the far side')
+  assert.ok(Math.abs(pts.at(-1)[0]) < 1e-6 && Math.abs(pts.at(-1)[1]) < 1e-6, 'must close on the start')
+
+  const b2 = bench()
+  b2.write('G21 G90 G17\nG1 F600\nG2 X50 Y0 R25\n')  // semicircle over the top
+  assert.ok(pathOf(b2.m).some(([, y]) => y > 24.9), 'R25 semicircle should reach +Y25')
+
+  const b3 = bench()
+  b3.write('G21 G90 G17\nG1 F600\nG3 X50 Y0 R25\n')  // the other way
+  assert.ok(pathOf(b3.m).some(([, y]) => y < -24.9), 'G3 should go under')
+})
+
+test('the board\'s arc errors: no offsets, an impossible radius, a bad endpoint', () => {
+  const { out, write } = bench()
+  write('G21 G90 G17 G1 F600\n')
+  out.length = 0
+  write('G2 X10 Y10\n')
+  assert.ok(out.includes('error:35'), out.join('|'))
+  out.length = 0
+  write('G2 X50 Y0 R10\n')                          // 20 mm of diameter, 50 mm away
+  assert.ok(out.includes('error:34'), out.join('|'))
+  out.length = 0
+  write('G2 X50 Y0 I5 J0\n')                        // endpoint nowhere near the circle
+  assert.ok(out.includes('error:33'), out.join('|'))
+})
+
+test('the graphics plot is the program, drawn from the planner without ticking', () => {
+  const { pts, err, blocks } = toolPath([
+    'G21 G90 G17', 'G0 X10 Y10', 'G1 F600 X30', 'G2 X40 Y20 I0 J10', 'G0 X0 Y0'
+  ])
+  assert.equal(err, null)
+  assert.equal(blocks, 5)   // every block is planned, motion or not
+
+  assert.deepEqual(pts[0], [0, 0, true])                    // starts at machine zero
+  assert.deepEqual(pts[1], [10, 10, true])                  // the rapid in
+  assert.ok(pts.some(p => p[0] === 30 && p[1] === 10 && !p[2]), 'the cut is a feed move')
+  // The arc is many points, all on its circle, and none of them rapid.
+  const arc = pts.filter(p => !p[2] && p[0] > 30)
+  assert.ok(arc.length > 10, `arc drew ${arc.length} points`)
+  for (const [x, y] of arc) assert.ok(Math.abs(Math.hypot(x - 30, y - 20) - 10) < 0.02)
+  assert.deepEqual(pts.at(-1), [0, 0, true])                // and the rapid out
+})
+
+test('a plot stops where the machine would have: bad block, or off the table', () => {
+  const bad = toolPath(['G21 G90', 'G0 X10 Y10', 'G1 X20 F0', 'G1 X50'])
+  assert.equal(bad.err, 'error:22')                          // no feedrate
+  assert.ok(bad.pts.every(p => p[0] <= 10), 'nothing past the rejected block')
+
+  const off = toolPath(['G21 G90', 'G0 X10', 'G0 X400'], { maxTravel: [100, 100, 100, 100] })
+  assert.equal(off.err, 'ALARM:2')
+  assert.deepEqual(off.pts.at(-1), [10, 0, true])
 })

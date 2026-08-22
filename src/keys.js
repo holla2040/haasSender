@@ -237,8 +237,9 @@ export const LEGEND = Object.fromEntries(
 export const VERIFIED = new Set([
   // display pages with real content behind them
   'page-position', 'page-program',
-  // SETTING carries the one setting this control has — inch/metric, observed
-  // switching the board's modal state and the DRO's units together
+  // SETTING carries the settings this control has — inch/metric, observed
+  // switching the board's modal state and the DRO's units together — and, on a
+  // second press, the GRAPHICS page (§3.8), checked against the simulator
   'page-setting',
   // OFFSET, and the two ways to write a cell in it: a typed value committed with
   // WRITE/ENTER, and PART ZERO SET storing the machine position. Both watched

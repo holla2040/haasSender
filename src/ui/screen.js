@@ -395,6 +395,7 @@ const MAIN_TITLE = {
   alarms: 'ALARMS',
   param: 'PARAMETER / DIAGNOSTIC',
   setting: 'SETTING / GRAPHIC',
+  graphics: 'GRAPHICS',
   help: 'HELP'
 }
 
@@ -616,6 +617,11 @@ const DIVERGENCES = [
   ['', 'alarm, $H homes. RESET sends the $X for you once the'],
   ['', 'cycle is gone. The ALARMS page says which is which.'],
   ['', ''],
+  ['Graphics', 'SETTING/GRAPHIC twice, then CYCLE START draws the'],
+  ['', 'program from above instead of cutting it. No [F2]'],
+  ['', 'zoom box and no [F3]/[F4] speed: the whole path is'],
+  ['', 'fitted to the pane and drawn at once.'],
+  ['', ''],
   ['EMERGENCY', 'A software reset. It is NOT a hardware E-stop and'],
   ['STOP', 'cannot be one from a browser.'],
   ['', ''],
@@ -682,10 +688,76 @@ const mainTitle = (s) =>
         ? `HELP  ${helpFrom(s) + 1}-${Math.min(helpFrom(s) + HELP_ROWS, helpTotal)} / ${helpTotal}`
         : (MAIN_TITLE[s.activePane] ?? '')
 
+/**
+ * The GRAPHICS page, §3.8: the program drawn from above — X right, Y up — which
+ * is the view an operator already has in their head from standing at the table.
+ *
+ * Rapids are drawn dashed and dim, cutting moves solid. The manual makes that a
+ * setting (4, Graphics Rapid Path) because a 1990s control had to choose; there
+ * is no reason to make anyone choose here when the two can be told apart at a
+ * glance.
+ *
+ * The path data is built once and hung on the plot object. A repaint runs four
+ * times a second off the status report, and re-walking fifty thousand points to
+ * produce the same string every time is the kind of waste that shows up as a
+ * control that feels slow.
+ */
+function graphicsBody (s) {
+  const p = s.plot
+  if (!p) {
+    return html`<pre class="dim">press CYCLE START to draw the program
+
+Nothing moves. The control runs it against a
+simulated machine and plots the tool path
+from above: X right, Y up, rapids dashed.</pre>`
+  }
+  if (p.pts.length < 2) return html`<pre class="dim">nothing to draw — no motion in this program</pre>`
+
+  if (!p.d) {
+    let [x0, y0] = p.pts[0]
+    let [x1, y1] = p.pts[0]
+    for (const [x, y] of p.pts) {
+      if (x < x0) x0 = x; else if (x > x1) x1 = x
+      if (y < y0) y0 = y; else if (y > y1) y1 = y
+    }
+    // A program that only moves along one axis has no width. Give the box
+    // something to be, or the viewBox divides by zero and the pane goes blank.
+    const w = Math.max(x1 - x0, 0.001)
+    const h = Math.max(y1 - y0, 0.001)
+    const pad = Math.max(w, h) * 0.04
+    const n = (v) => Math.round(v * 1000) / 1000
+    const d = { feed: '', rapid: '' }
+    let kind = null
+    for (let i = 1; i < p.pts.length; i++) {
+      const [x, y, rapid] = p.pts[i]
+      const k = rapid ? 'rapid' : 'feed'
+      // Y is negated rather than transformed: machine Y climbs, SVG Y falls.
+      if (k !== kind) { d[k] += `M${n(p.pts[i - 1][0])} ${n(-p.pts[i - 1][1])}`; kind = k }
+      d[k] += `L${n(x)} ${n(-y)}`
+    }
+    p.d = d
+    p.box = [x0 - pad, -(y1 + pad), w + 2 * pad, h + 2 * pad].map(n).join(' ')
+    p.tick = Math.max(w, h) * 0.02
+    p.extent = [x0, x1, y0, y1]
+  }
+
+  const k = displayScale('MM', s.units)         // the plot is millimetres, always
+  const f = (v) => (v * k).toFixed(s.units === 'IN' ? 4 : 3)
+  const [x0, x1, y0, y1] = p.extent
+  return html`
+    <svg class="plot" viewBox=${p.box} preserveAspectRatio="xMidYMid meet">
+      <path class="rapid" d=${p.d.rapid}></path>
+      <path class="feed" d=${p.d.feed}></path>
+      <path class="zero" d=${`M${-p.tick} 0h${p.tick * 2}M0 ${-p.tick}v${p.tick * 2}`}></path>
+    </svg>
+    <pre class="dim">X ${f(x0)} to ${f(x1)}   Y ${f(y0)} to ${f(y1)}   ${s.units}</pre>`
+}
+
 function mainBody (s) {
   if (s.activePane === 'position') return positionBody(s)
   if (s.activePane === 'program') return programBody(s)
   if (s.activePane === 'setting') return settingBody(s)
+  if (s.activePane === 'graphics') return graphicsBody(s)
   if (s.activePane === 'list') return listBody(s)
   if (s.activePane === 'mdi') return mdiBody(s)
   if (s.activePane === 'alarms') return alarmBody(s)
