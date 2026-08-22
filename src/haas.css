@@ -609,3 +609,7 @@ body {
 
 /* a block BLOCK DELETE will skip — shown, not hidden, so the switch is visible */
 .skipped { opacity: .38; }
+/* PROGRAM line numbers, Setting 1000. Opacity rather than a colour: the row
+   underneath may be the highlighted running block, and a dim green on that
+   amber is unreadable where a fade works on either ground. */
+.ln { opacity: .5; }

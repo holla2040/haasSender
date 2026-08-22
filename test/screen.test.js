@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, PROGRAM_ROWS, paneFrom } from '../src/ui/screen.js'
+import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, PROGRAM_ROWS, paneFrom, lineNumber } from '../src/ui/screen.js'
 import { wireLine, HAAS_COLLISIONS } from '../src/grbl.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
@@ -122,4 +122,34 @@ test('the last page of a listing is a full page, not a stub', () => {
   assert.equal(paneFrom(0, total, PROGRAM_ROWS), 0)
   // A program shorter than the pane has nowhere to scroll to.
   assert.equal(paneFrom(2, 3, PROGRAM_ROWS), 0)
+})
+
+// Setting 1000 puts a number beside every line the PROGRAM pane draws, and the
+// one way it can be wrong is the cheap way: numbering the WINDOW instead of the
+// FILE. Scrolled to the middle of a program that would read 1..16 forever,
+// renaming every block on screen each time the window moved. This walks the
+// window the way the pane does and holds the number to the line it belongs to.
+test('program line numbers count the file, not the window', () => {
+  const total = 400
+  const lines = Array.from({ length: total }, (_, i) => `N${i + 1} G1 X${i}`)
+
+  for (const cur of [0, 1, 8, 47, 200, total - 2, total - 1]) {
+    const from = paneFrom(cur, total, PROGRAM_ROWS)
+    const slice = lines.slice(from, from + PROGRAM_ROWS)
+    assert.equal(slice.length, PROGRAM_ROWS, `cur ${cur}: a short page means a blank tail`)
+
+    slice.forEach((text, i) => {
+      // The number the pane would draw must name the line drawn beside it.
+      const shown = lineNumber(from, i, total)
+      assert.equal(text, `N${Number(shown)} G1 X${Number(shown) - 1}`)
+      // Width is the program's, not the page's, so the column never shifts.
+      assert.equal(shown.length, 3, `cur ${cur}: column width moved`)
+    })
+  }
+
+  assert.equal(lineNumber(0, 0, 400), '  1')
+  assert.equal(lineNumber(0, 8, 400), '  9')
+  assert.equal(lineNumber(384, 15, 400), '400')
+  // A one-page program does not pad to a width it never reaches.
+  assert.equal(lineNumber(0, 0, 9), '1')
 })

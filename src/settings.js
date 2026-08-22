@@ -39,7 +39,25 @@ export const SETTINGS = [
     note: `Rows on the TOOL OFFSET page. 1 to ${TOOL_COUNT} — this control holds ${TOOL_COUNT} tools.` },
 
   { n: 119, name: 'OFFSET LOCK', choices: ['OFF', 'ON'], def: 'OFF',
-    note: 'ON: the OFFSET pages refuse edits. A running program may still change offsets.' }
+    note: 'ON: the OFFSET pages refuse edits. A running program may still change offsets.' },
+
+  // ---- Past where a HAAS ever counts: this control's own ---------------------
+  //
+  // A HAAS numbers its settings 1-249 and 900-916, and the Next Generation
+  // Control reaches into the 300s. None of them is ever four digits, so 1000 up
+  // is free for rows that are ours and could not be mistaken for one in T6.2. A
+  // student who types 1000 and goes hunting for it in the manual finds nothing,
+  // which is correct, and the row itself says why.
+  //
+  // Line numbers are the first of these because the machine has no place to put
+  // them that this control owns. On a HAAS the toggle is Show Line Numbers in
+  // the FNC editor's File menu (p.129) — an editor, in a mode, that this control
+  // does not model. The PROGRAM page here is a display pane, and the manual
+  // gives F1 no meaning on it, so binding one would have been an invention
+  // wearing a transcription's clothes. A setting is the same invention with its
+  // name on it.
+  { n: 1000, name: 'SHOW LINE NUMBERS', choices: ['OFF', 'ON'], def: 'OFF',
+    note: 'View-only count, never Nxx. NOT A HAAS SETTING — FNC editor menu, p.129.' }
 ]
 
 const BY_N = new Map(SETTINGS.map(d => [d.n, d]))

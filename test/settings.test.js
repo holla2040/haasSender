@@ -86,7 +86,39 @@ test('an out-of-range stored number is pulled back into the range', () => {
 // distinguishable from row 0, or typing 200 would silently land on setting 6.
 test('the number jump finds a row, and says so when there is none', () => {
   assert.equal(rowOfSetting(SETTINGS[0].n), 0)
-  assert.equal(rowOfSetting(119), SETTINGS.length - 1)
+  assert.equal(SETTINGS[rowOfSetting(119)].n, 119)   // findable, wherever it sits
   assert.equal(rowOfSetting(200), -1)
   assert.equal(rowOfSetting(NaN), -1)
+})
+
+// Setting 1000 is this control's own and has no HAAS row behind it, so the two
+// things that keep it honest are tested here: it lives past every number a HAAS
+// uses, and its note says out loud that it is not one of them. Lose either and
+// the page starts teaching a setting that does not exist on the machine.
+test('a setting this control invented is numbered and labelled as its own', () => {
+  const ln = at(1000)
+  assert.ok(ln, 'SHOW LINE NUMBERS must be on the page')
+  assert.match(ln.note, /NOT A HAAS SETTING/)
+  // 1-249 and 900-916 are the HAAS blocks; the NGC reaches into the 300s.
+  for (const d of SETTINGS) {
+    const ours = d.n >= 1000
+    assert.equal(ours, /NOT A HAAS SETTING/.test(d.note),
+      `setting ${d.n}: a number past 999 and the divergence note go together`)
+  }
+})
+
+// OFF at power-up, because the machine hides them until asked (p.129), and a
+// trainer that opened showing numbers no HAAS shows would be teaching the
+// divergence as the default.
+test('line numbers are off until someone turns them on, and then persist', () => {
+  const s = { set: settingDefaults() }
+  assert.equal(settingOn(s, 1000), false)
+
+  s.set = { ...s.set, 1000: nextChoice(at(1000), settingValue(s, at(1000)), 1) }
+  assert.equal(settingOn(s, 1000), true)
+  assert.equal(settingOn({ set: settingsFromStore(s.set) }, 1000), true)
+
+  // And it is a real toggle, not a one-way switch — the cursor comes back.
+  assert.equal(nextChoice(at(1000), 'ON', 1), 'OFF')
+  assert.equal(nextChoice(at(1000), 'ON', -1), 'OFF')
 })

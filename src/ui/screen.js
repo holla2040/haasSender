@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html'
 import { WCS, TOOL_COUNT, words, modalGroups, describeSetting, HAAS_COLLISIONS } from '../grbl.js'
-import { SETTINGS, settingValue, maxTools } from '../settings.js'
+import { SETTINGS, settingValue, settingOn, maxTools } from '../settings.js'
 import { UNAVAILABLE, VERIFIED, GROUPS } from '../keys.js'
 
 // Counted from the key tables rather than written down, so the HELP page cannot
@@ -22,7 +22,24 @@ export const PANE_ROWS = 8
 
 // The PROGRAM pane is the tall one, so it gets its own count — and PAGE UP and
 // PAGE DOWN there step by it.
-export const PROGRAM_ROWS = 16
+//
+// Measured, not guessed: the pane is 13.87 text rows tall, so 13 is what fits
+// whole. It was 16, and the three rows that overflowed were clipped by the
+// pane's `overflow: hidden` — invisible while the window never reached the tail,
+// and then END scrolled to the last block and the last block was not on screen.
+// Re-measure if the screen's height, leading or type size moves:
+//   (pane height - padding - heading) / line-height, in the browser.
+export const PROGRAM_ROWS = 13
+
+/**
+ * The number drawn beside a program row under Setting 1000 — the line's place in
+ * the FILE, never its place in the window. `from + i`, never `i`: numbering the
+ * window would renumber the program every time the operator scrolled, and every
+ * number below the first page would be wrong. Width comes from the whole program
+ * so the column cannot shift as the window crosses 9, 99, 999.
+ */
+export const lineNumber = (from, i, total) =>
+  String(from + i + 1).padStart(String(total).length)
 
 /** First row on screen: the cursor kept mid-window, then clamped to the list. */
 export const paneFrom = (row, total, rows = PANE_ROWS) =>
@@ -121,12 +138,18 @@ one, then SELECT PROGRAM.</pre>`
   const cur = Math.max(0, s.program.current - 1)
   const from = paneFrom(cur, s.program.lines.length, PROGRAM_ROWS)
   const slice = s.program.lines.slice(from, from + PROGRAM_ROWS)
+  const numbered = settingOn(s, 1000)     // Setting 1000
   // The listing always shows the file as written, slashes and all. BLOCK DELETE
   // greys the blocks it will skip rather than hiding them — a student needs to
   // see what the switch is doing to the program in front of them.
   return html`<pre>${slice.map((l, i) => html`<div
     class=${(from + i === cur ? 'cur' : '') + (l.del && s.blockDelete ? ' skipped' : '')}
-    >${l.text}</div>`)}</pre>`
+    >${numbered
+      // Held off the code and dimmed, because these are not Nxx and a student
+      // who reads them as program text has been taught something false. p.129:
+      // "never saved as part of the program like Nxx numbers would be."
+      ? html`<span class="ln">${lineNumber(from, i, s.program.lines.length)}  </span>`
+      : nothing}${l.text}</div>`)}</pre>`
 }
 
 /**
@@ -137,6 +160,13 @@ one, then SELECT PROGRAM.</pre>`
  * Two rows short of the pane, so the last two carry the manual's own habit of
  * telling you how to change the row you are standing on (p.341).
  */
+// Width of the setting-number column, taken from the widest number actually on
+// the page plus the two spaces that keep it off the name. Hardcoded at 5 this
+// fitted every HAAS number and then Setting 1000 arrived and printed
+// `1000SHOW LINE NUMBERS` — the four digits ate the whole gap. Derived, the
+// column cannot be outgrown by a row someone adds later.
+const SET_N_WIDTH = Math.max(...SETTINGS.map(d => String(d.n).length)) + 2
+
 function settingBody (s) {
   const rows = PANE_ROWS - 2
   const from = paneFrom(s.setRow, SETTINGS.length, rows)
@@ -150,7 +180,7 @@ function settingBody (s) {
       ? 'CURSOR ◀ ▶ changes it.'
       : `Type ${here.min}-${here.max} and press WRITE/ENTER.`
   return html`<pre>${SETTINGS.slice(from, from + rows).map((d, i) => html`<div
-    class=${from + i === s.setRow ? 'cur' : ''}>${(' ' + d.n + '    ').slice(0, 5)}${
+    class=${from + i === s.setRow ? 'cur' : ''}>${(' ' + d.n).padEnd(SET_N_WIDTH)}${
     (d.name + '                       ').slice(0, 23)}<span
     class="k">${settingValue(s, d)}</span></div>`)}
 <span class="dim">${here.note}
