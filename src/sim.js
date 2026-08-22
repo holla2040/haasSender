@@ -144,7 +144,17 @@ export class VirtualGrbl {
   realtime (byte) {
     switch (byte) {
       case 0x3F: this.emit(this.statusReport()); return          // ?
-      case 0x18: this.reset(false); this.emit('ok'); return      // soft reset
+      // Soft reset. grbl's mc_reset: abandoning a cycle mid-move leaves the
+      // controller no longer knowing where the tool is, so it comes back up
+      // latched in ALARM:3 instead of answering. The latch also SURVIVES the
+      // next 0x18 — a reset cannot restore a position it never knew, so the
+      // alarm comes straight back and only `$X` opens it.
+      case 0x18: {
+        const latched = MOVING.has(this.state) || this.current ? 3 : this.alarm
+        this.reset(false)
+        if (latched) return this.raiseAlarm(latched)
+        this.emit('ok'); return
+      }
       case 0x21: if (this.state === 'Run') this.state = 'Hold'; return   // !
       case 0x7E: if (this.state === 'Hold') this.state = 'Run'; return   // ~
       case 0x85: this.cancelJog(); return

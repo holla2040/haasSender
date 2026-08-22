@@ -85,6 +85,9 @@ const s = {
   // (grblHAL and the sim); it exists so a classic-grbl serial board can fall
   // back to sender-side stripping the day Web Serial is bench-tested.
   caps: { runSwitches: true, toolTable: false, expr: false, haas: false }, optSynced: false,
+  // Did the machine ever answer `$I`? Not the same question as "does it have
+  // the parity firmware" — see askIdentity().
+  idSeen: false,
   program: { o: '', name: '', lines: [], current: 0 },
   job: null, plannerSize: 100,
   // The timers pane. `cycleStartedAt` is wall-clock rather than a tick count so a
@@ -362,6 +365,18 @@ function press (id) {
     case 'cycle-start': return cycleStart()
     case 'feed-hold': return link?.sendRealtime(0x21)
     case 'reset': case 'estop':
+      // Nothing left to abort and grbl sitting locked: RESET is the unlock. A
+      // soft reset in motion lands in ALARM:3, and a second 0x18 only re-locks
+      // it — `$X` is grbl's one way out, and RESET is where a HAAS operator
+      // looks for it. Without this the panel cannot clear an alarm at all and
+      // the operator has to go and type `$X` on the MDI page. Gated on there
+      // being no job: with one still live the first press must abort it, and
+      // only the press after that unlocks.
+      if (id === 'reset' && !s.job && inAlarm()) {
+        s.message = 'unlocked — position is not trustworthy, home before you cut'
+        send('$X')
+        return invalidate()
+      }
       link?.sendRealtime(0x18)
       // Forget the job, do not merely pause it. Leaving the old line list in the
       // streamer made the next CYCLE START look like a resume — it sent a cycle
@@ -624,6 +639,16 @@ function modalS () {
 }
 
 // --------------------------------------------------------------------- alarms
+
+/**
+ * Is the machine locked out right now?
+ *
+ * Two sources, because they arrive at different speeds: the `ALARM:n` line lands
+ * the instant it happens, while `Alarm` in the status report waits on the next
+ * poll. An E-STOP's own banner is deliberately not one of them — it is this
+ * control's word, not a grbl lock, and `$X` has nothing to unlock.
+ */
+const inAlarm = () => s.alarm?.startsWith('ALARM') || /^Alarm/.test(s.machineState)
 
 /**
  * Keep what went wrong, newest first, so the ALARMS page has something to show.
@@ -1563,8 +1588,8 @@ function cycleStart () {
     s.message = `press RESET first — the program stopped on error ${streamer.error.code} at block ${streamer.error.line}`
     return invalidate()
   }
-  if (/^Alarm/.test(s.machineState)) {
-    s.message = 'machine is in alarm — press ALARMS to see what clears it'
+  if (inAlarm()) {
+    s.message = 'machine is in alarm — RESET unlocks it, ALARMS says what it costs'
     return invalidate()
   }
 
@@ -1745,6 +1770,10 @@ function onLine (line) {
   if (!fb) { s.message = line; return invalidate() }
 
   if (fb.kind === 'OPT') {
+    // Every grblHAL `$I` emits `[OPT:]`, and only `$I` does — so this line is
+    // the receipt for the whole burst, including the `[PLUGIN:]` rows that come
+    // a few lines behind it. Stop re-asking.
+    s.idSeen = true
     const opt = parseOpt(fb.value)
     if (opt.rx && streamer) streamer.rxBuffer = opt.rx
     if (opt.planner) s.plannerSize = opt.planner
@@ -1899,6 +1928,46 @@ function applyStatus (st) {
 
 // ------------------------------------------------------------------ connection
 
+// Eighteen asks, five seconds apart: ninety seconds, which is deliberately past
+// the sixty the firmware's session reaper takes to drop a dead peer and hand the
+// input stream back (6b4ae87). Give up sooner and the control would sit refusing
+// programs through the very minute the board was about to start answering.
+const ID_TRIES = 18
+const ID_RETRY_MS = 5000
+let idTries = 0
+let idGaveUp = false
+let lastIdAskAt = 0
+
+/**
+ * Everything this control has to ask the machine before it can be trusted to
+ * stream: what the firmware can do (`$I`), where the offsets are (`$#`), what
+ * the modal state is (`$G`), and what the settings say (`$$` — one dump of ~40
+ * lines that pays for the PARAMETER page, `$13`, and `$130`+).
+ *
+ * Asked more than once, because the answer can be dropped on the floor.
+ * grblHAL has ONE input stream: whoever connected last owns it, and a peer that
+ * vanished without a clean close goes on owning it (firmware 814ed68, and the
+ * reaper it switched back on in 6b4ae87). A client that opens in that window
+ * gets the websocket handshake, gets `?` answered — realtime bytes are handled
+ * per connection — and gets silence for every line command it sends. Nothing
+ * about the link looks wrong.
+ *
+ * Bench, 2026-08-22: the burst was sent once at connect, that once was lost,
+ * and `caps.haas` stayed false for the rest of the session. Every program with
+ * an M30 in it was then refused with "requires the paired HAAS parity v0.2
+ * firmware" — against a board whose `$I` says `[PLUGIN:HAAS parity v0.2]` —
+ * until the page was reloaded. Never heard from is not the same as answered no,
+ * and this control must not confuse the two.
+ */
+function askIdentity () {
+  idTries++
+  lastIdAskAt = performance.now()
+  link.send('$I\n')
+  link.send('$G\n')
+  link.send('$#\n')
+  link.send('$$\n')
+}
+
 async function connect () {
   const kind = $('kind').value
   // Let go of the previous link first. Without this, reconnecting leaves the old
@@ -1926,6 +1995,9 @@ async function connect () {
     // A new connection is a new firmware: relearn what it can do.
     s.caps = { runSwitches: true, toolTable: false, expr: false, haas: false }
     s.optSynced = false
+    s.idSeen = false
+    idTries = 0
+    idGaveUp = false
 
     link.onLine(onLine)
     await link.connect()
@@ -1938,13 +2010,7 @@ async function connect () {
     s.link = link.kind.toUpperCase()
     // Only the network transport can write to the card — see sendToCard().
     s.boardHost = kind === 'websocket' ? $('host').value : null
-    link.send('$I\n')
-    link.send('$G\n')
-    link.send('$#\n')
-    // Everything the machine will tell us about itself. `$$` costs one dump of
-    // ~40 lines at connect and pays for the PARAMETER page, `$13` (which unit
-    // `MPos:` arrives in) and `$130`+ (how far a latched jog may run).
-    link.send('$$\n')
+    askIdentity()
     s.powered = true        // a machine that answers is a machine that is on
     $('power').close()      // connected: get out of the way
   } catch (e) {
@@ -1959,8 +2025,30 @@ async function connect () {
 }
 
 setInterval(() => {
-  const quiet = performance.now() - lastReportAt
+  const now = performance.now()
+  const quiet = now - lastReportAt
   if (link && quiet > STATUS_IDLE_MS) link.sendRealtime(0x3F)
+
+  // Ask again until the machine tells us what it is — see askIdentity(). The
+  // status poll above is no evidence either way: `?` answers from a board whose
+  // input stream belongs to somebody else, so a live DRO sits happily above a
+  // control that has learned nothing.
+  // `idTries > 0`: this poller only ever RE-asks. The first ask belongs to
+  // connect(), after the handshake — without this the interval can fire into a
+  // socket that is still CONNECTING and burn a try on a send that goes nowhere.
+  // `!s.job`: four lines the streamer did not count would be four lines of rx
+  // buffer it thinks it still has. Waiting costs nothing — the retry picks up
+  // again when the cycle ends.
+  if (link && idTries > 0 && !s.idSeen && !idGaveUp && !s.job && now - lastIdAskAt > ID_RETRY_MS) {
+    if (idTries < ID_TRIES) askIdentity()
+    else {
+      // Once, and then stop asking. Said out loud, because the alternative is a
+      // refusal an hour later that blames the firmware for this.
+      idGaveUp = true
+      s.message = 'the machine never answered $I — another client may hold its input stream. G28, M00 and M30 are refused until it does; reconnect to ask again'
+      invalidate()
+    }
+  }
 
   // Staleness watchdog. A dropped socket does not clear `link` — the websocket
   // just stops delivering — so without this the DRO holds its last reading and

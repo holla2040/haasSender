@@ -455,3 +455,24 @@ test('the chip conveyor and TSC M-codes work like the bench board', () => {
   write('M89\n'); run(0.2)
   assert.equal(m.mist, false)
 })
+
+test('a reset in motion alarms, a second reset does not clear it, $X does', () => {
+  const { m, out, write, run } = bench()
+  write('G21 G90\nG1 X60 F600\n')
+  run(1)
+  assert.equal(m.state, 'Run')
+
+  out.length = 0
+  m.realtime(0x18); m.drain()                 // RESET mid-cut
+  assert.equal(m.state, 'Alarm')
+  assert.ok(out.includes('ALARM:3'), out.join('|'))
+
+  m.realtime(0x18); m.drain()                 // and again — grbl stays locked
+  assert.equal(m.state, 'Alarm')
+  write('G0 X0\n')
+  assert.ok(out.includes('error:9'), 'g-code must stay locked out')
+
+  write('$X\n')
+  assert.equal(m.state, 'Idle')
+  assert.equal(m.alarm, null)
+})

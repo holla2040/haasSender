@@ -319,11 +319,12 @@ export function haasNote (text) {
  * What actually clears each alarm, which is the half a student needs and the half
  * the grbl tables never print.
  *
- * The control says what to do; it does not do it. `$X` re-enables motion on a
- * machine whose position may be wrong — after a hard limit or a reset in motion,
- * the controller genuinely does not know where the tool is — and a trainer that
- * quietly unlocked for you would be teaching exactly the wrong reflex. A HAAS
- * makes you clear the condition before RESET means anything, and so does this.
+ * The control says what to do; it does not do it for you silently. `$X` re-enables
+ * motion on a machine whose position may be wrong — after a hard limit or a reset
+ * in motion, the controller genuinely does not know where the tool is — so the
+ * recovery text always names the price. RESET will send the `$X`, but only on a
+ * second press with the cycle already abandoned: the first press stops the
+ * machine, and the operator has to look at the alarm before pressing again.
  */
 export const ALARM_RECOVERY = {
   1: 'Move off the switch by hand, then $X to unlock and $H to re-establish position.',
