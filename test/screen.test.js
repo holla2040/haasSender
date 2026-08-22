@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, paneFrom } from '../src/ui/screen.js'
+import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, PROGRAM_ROWS, paneFrom } from '../src/ui/screen.js'
 import { wireLine, HAAS_COLLISIONS } from '../src/grbl.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
@@ -101,7 +101,7 @@ test('the section jumps land on section starts, in order', () => {
 // scrolled by between screens and were never on one. A page step may be no
 // larger than the window it turns.
 test('paging a pane shows every row on the way past', () => {
-  for (const rows of [PANE_ROWS, PANE_ROWS - 1]) {
+  for (const rows of [PANE_ROWS, PANE_ROWS - 1, PROGRAM_ROWS]) {
     const total = 40
     const seen = new Set()
     for (let row = 0; ; row = Math.min(total - 1, row + rows)) {
@@ -111,4 +111,15 @@ test('paging a pane shows every row on the way past', () => {
     }
     assert.equal(seen.size, total, `a ${rows}-row pane skipped a row paging by ${rows}`)
   }
+})
+
+// The PROGRAM listing used a fixed four-rows-above offset and never clamped at
+// the tail, so END on a long program showed the last line with fifteen blanks
+// under it. A window at the end must still be a full window.
+test('the last page of a listing is a full page, not a stub', () => {
+  const total = 300
+  assert.equal(paneFrom(total - 1, total, PROGRAM_ROWS), total - PROGRAM_ROWS)
+  assert.equal(paneFrom(0, total, PROGRAM_ROWS), 0)
+  // A program shorter than the pane has nowhere to scroll to.
+  assert.equal(paneFrom(2, 3, PROGRAM_ROWS), 0)
 })

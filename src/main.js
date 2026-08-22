@@ -2,7 +2,7 @@ import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, homeG28, toolsUsed, stripComments, words, editBlock, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
-import { screen, displayScale, HELP_ROWS, PANE_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
+import { screen, displayScale, HELP_ROWS, PANE_ROWS, PROGRAM_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND, keyForChar } from './keys.js'
 import { SETTINGS, settingValue, settingOn, maxTools, settingDefaults, settingsFromStore, clampSetting, nextChoice, rowOfSetting } from './settings.js'
 
@@ -280,6 +280,18 @@ function press (id) {
     if (id === 'home') { s.editRow = 0; s.editWord = 0; return invalidate() }
     if (id === 'end') { s.editRow = Math.max(0, target().lines.length - 1); s.editWord = 0; return invalidate() }
     if (['insert', 'alter', 'delete', 'undo'].includes(id)) return editKey(id)
+  }
+
+  // PROGRAM, outside the editor: the cursor walks the listing. §4.2.1 p.115 step
+  // 7 — "use the jog handle or cursor keys to scroll through the program code" —
+  // and until this existed a selected program could only be READ by entering
+  // EDIT mode, which is not where anybody runs one from.
+  if (s.activePane === 'program') {
+    const move = {
+      up: -1, down: 1, 'page-up': -PROGRAM_ROWS, 'page-down': PROGRAM_ROWS,
+      home: -1e9, end: 1e9
+    }[id]
+    if (move !== undefined) return programCursor(move)
   }
 
   // HELP is longer than the pane. PAGE UP and PAGE DOWN turn it, as they turn the
@@ -1345,6 +1357,34 @@ function offsetEntry (value, mode) {
   return writeOffset(mode === 'add' ? current + value : value)
 }
 
+/**
+ * Walk the PROGRAM listing.
+ *
+ * The cursor and the running-block mark are one value, `current`, because they
+ * are one thing on the machine: the control drives it while the program runs,
+ * the operator drives it when it stops. Setting 36 restarts from wherever it was
+ * left, which only makes sense if they are the same row.
+ *
+ * `current` is 1-based and 0 means "no pointer" — what RESET leaves under
+ * Setting 31 — so a clamp from 0 lands on line 1 with no special case.
+ */
+function programCursor (d) {
+  const n = s.program.lines.length
+  if (!n) {
+    s.message = 'no program selected — press LIST PROGRAM, then SELECT PROGRAM'
+    return invalidate()
+  }
+  // While this program is streaming, the mark belongs to the machine: every
+  // status report writes it, so a keypress would be overwritten within the
+  // frame and the cursor would appear broken rather than busy.
+  if (s.job?.prog === s.program) {
+    s.message = 'not while the program is running'
+    return invalidate()
+  }
+  s.program.current = Math.max(1, Math.min(n, s.program.current + d))
+  return invalidate()
+}
+
 /** A typed `Onnnnn`: select it, or create it — §3.3.2 step 2, §4.1 step 2. */
 function selectOrCreateProgram (o) {
   const at = s.programs.findIndex(p => p.o === o)
@@ -1479,7 +1519,8 @@ function jogWheel (dir) {
 /** Panes with something for the handle to scroll. */
 const hasCursor = () =>
   editing() || s.activePane === 'list' || s.activePane === 'offset' ||
-  s.activePane === 'param' || s.activePane === 'setting'
+  s.activePane === 'param' || s.activePane === 'setting' ||
+  s.activePane === 'program'
 
 function cycleStart () {
   // The machine is holding — from FEED HOLD, or from an M00/M01 the program ran

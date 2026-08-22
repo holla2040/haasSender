@@ -308,9 +308,9 @@ export const VERIFIED = new Set([
   // caused it
   'mode-mdi',
   // The cursor group. Every pane with something to point at now responds: the
-  // EDIT word cursor, the offset grid, the tool table, control memory, and
-  // inch/metric on the SETTING page. On a pane with no cursor they do nothing,
-  // which is what the machine's do too.
+  // EDIT word cursor, the PROGRAM listing, the offset grid, the tool table,
+  // control memory, and the SETTING list. On a pane with no cursor they do
+  // nothing, which is what the machine's do too.
   'left', 'right', 'up', 'down', 'home', 'end', 'page-up', 'page-down',
   // Typing. These feed the input bar, which is the entry buffer WRITE/ENTER
   // commits into whichever pane is active — offsets, tool lengths, MDI blocks and

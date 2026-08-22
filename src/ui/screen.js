@@ -20,6 +20,10 @@ const AXES = ['X', 'Y', 'Z', 'A']
 // never sees, which is not paging, it is skipping.
 export const PANE_ROWS = 8
 
+// The PROGRAM pane is the tall one, so it gets its own count — and PAGE UP and
+// PAGE DOWN there step by it.
+export const PROGRAM_ROWS = 16
+
 /** First row on screen: the cursor kept mid-window, then clamped to the list. */
 export const paneFrom = (row, total, rows = PANE_ROWS) =>
   Math.max(0, Math.min(row - Math.floor(rows / 2), total - rows))
@@ -107,11 +111,16 @@ function programBody (s) {
 Press LIST PROGRAM, highlight
 one, then SELECT PROGRAM.</pre>`
   }
-  // Window the listing around the running block rather than rendering thousands
-  // of lines; the pane only shows a dozen or so anyway.
+  // Window the listing around the cursor rather than rendering thousands of
+  // lines; the pane only shows a dozen or so anyway. Cursor and running-block
+  // mark are the same row, because they are the same thing on the machine: the
+  // control drives it while the program runs, the operator drives it when it
+  // stops. `paneFrom` keeps it mid-pane and, unlike the fixed offset this used,
+  // clamps at the tail — so END shows the last page instead of two lines and
+  // fourteen blanks.
   const cur = Math.max(0, s.program.current - 1)
-  const from = Math.max(0, cur - 4)
-  const slice = s.program.lines.slice(from, from + 16)
+  const from = paneFrom(cur, s.program.lines.length, PROGRAM_ROWS)
+  const slice = s.program.lines.slice(from, from + PROGRAM_ROWS)
   // The listing always shows the file as written, slashes and all. BLOCK DELETE
   // greys the blocks it will skip rather than hiding them — a student needs to
   // see what the switch is doing to the program in front of them.
