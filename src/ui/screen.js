@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html'
 import { WCS, TOOL_COUNT, words, modalGroups, describeSetting, HAAS_COLLISIONS } from '../grbl.js'
+import { SETTINGS, settingValue, maxTools } from '../settings.js'
 import { UNAVAILABLE, VERIFIED, GROUPS } from '../keys.js'
 
 // Counted from the key tables rather than written down, so the HELP page cannot
@@ -120,20 +121,31 @@ one, then SELECT PROGRAM.</pre>`
 }
 
 /**
- * The one setting this control really has.
+ * The SETTING page — §2.4 p.65, T6.2 p.337.
  *
- * A HAAS keeps inch/metric as Setting 9, a stored machine setting. On grbl it is
- * modal g-code — G20 and G21 — so there is nothing stored to read back and the
- * machine's own `$G` is the only authority. This pane shows what `$G` last
- * reported, not what we last asked for, which is the difference between a
- * display and a guess.
+ * A list with a cursor, because that is what it is on the machine: the operator
+ * either walks to a row or types its number and presses a vertical cursor key.
+ * Two rows short of the pane, so the last two carry the manual's own habit of
+ * telling you how to change the row you are standing on (p.341).
  */
 function settingBody (s) {
-  const inch = s.units === 'IN'
-  return html`<pre>  9  INCH / METRIC        <span class="k">${inch ? 'INCH' : 'METRIC'}</span>   <span class="dim">${inch ? 'G20' : 'G21'}</span>
-
-<span class="dim">CURSOR ◀ ▶ changes it. Modal g-code here, not a stored
-setting, so a program commanding G20 or G21 changes it too.</span></pre>`
+  const rows = PANE_ROWS - 2
+  const from = paneFrom(s.setRow, SETTINGS.length, rows)
+  const here = SETTINGS[s.setRow]
+  // p.341: "The message near the top of the screen displays how to change the
+  // selected setting." Which key changes it depends on which kind of row it is,
+  // and guessing wrong is the whole reason the machine prints it.
+  const how = here.get
+    ? 'CURSOR ◀ ▶ commands it — nothing is stored here.'
+    : here.choices
+      ? 'CURSOR ◀ ▶ changes it.'
+      : `Type ${here.min}-${here.max} and press WRITE/ENTER.`
+  return html`<pre>${SETTINGS.slice(from, from + rows).map((d, i) => html`<div
+    class=${from + i === s.setRow ? 'cur' : ''}>${(' ' + d.n + '    ').slice(0, 5)}${
+    (d.name + '                       ').slice(0, 23)}<span
+    class="k">${settingValue(s, d)}</span></div>`)}
+<span class="dim">${here.note}
+${how}  Type a number and press ▼ to jump.</span></pre>`
 }
 
 /**
@@ -159,9 +171,14 @@ function toolBody (s) {
   const inches = s.units === 'IN'
   // One row of this pane is spent on the column heading.
   const rows = PANE_ROWS - 1
-  const from = paneFrom(s.toolRow, TOOL_COUNT, rows)
+  // Setting 90 — how many of the tools this control holds are worth looking at.
+  const shown = maxTools(s)
+  const from = paneFrom(s.toolRow, shown, rows)
+  // Never more rows than Setting 90 admits to. Windowing alone is not enough —
+  // with the setting down at 3 the window still starts at zero and a fixed row
+  // count went right on drawing T04 through T07 underneath it.
   return html`<pre>  TOOL     LENGTH (Z)
-${Array.from({ length: rows }, (_, i) => {
+${Array.from({ length: Math.min(rows, shown) }, (_, i) => {
     const n = from + i + 1
     const v = s.tools[n]
     return html`<div>  T${String(n).padStart(2, '0')}  ${
@@ -169,7 +186,7 @@ ${Array.from({ length: rows }, (_, i) => {
         ? '—'
         : fmt(v * k, inches, s.stale))).slice(-11)}</div>`
   })}
-<span class="dim">TOOL OFFSET MEASURE stores the machine Z. A dash is never measured.</span></pre>`
+<span class="dim">${shown < TOOL_COUNT ? `T01-T${String(shown).padStart(2, '0')} of ${TOOL_COUNT} — Setting 90. ` : ''}TOOL OFFSET MEASURE stores the machine Z.</span></pre>`
 }
 
 function offsetBody (s) {

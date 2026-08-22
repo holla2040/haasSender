@@ -1,9 +1,10 @@
 import { render } from 'lit-html'
 import { websocketTransport, serialTransport, simTransport, servedFromBoard } from './transport.js'
-import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, homeG28, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
+import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, homeG28, toolsUsed, stripComments, words, editBlock, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, PANE_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND, keyForChar } from './keys.js'
+import { SETTINGS, settingValue, settingOn, maxTools, settingDefaults, settingsFromStore, clampSetting, nextChoice, rowOfSetting } from './settings.js'
 
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
@@ -105,6 +106,11 @@ const s = {
   // The machine's own settings, as `$$` reports them. Read-only here: writing a
   // setting is a different kind of act from writing a work offset.
   settings: {}, paramRow: 0,
+  // THIS control's settings — the HAAS ones on the SETTING page, which are a
+  // different thing entirely from the machine's `$$` above. Defaults until
+  // POWER ON reads what was stored, because a control reads its settings when it
+  // powers up and there is nothing to read them for before that.
+  set: settingDefaults(), setRow: 0,
   // The handwheel: what it does, which axis it moves, and which axis JOG LOCK has
   // latched into a continuous move. All front-panel state, none of it the
   // machine's. `jogAxis` is chosen by pressing a jog key, as on the machine —
@@ -200,14 +206,33 @@ function press (id) {
   // Display keys move the white highlight; they do not change mode.
   if (DISPLAY_PANES[id]) { s.activePane = DISPLAY_PANES[id]; return invalidate() }
 
-  // The SETTING page's one real setting. A HAAS keeps inch/metric in Setting 9;
-  // grbl has no such store, so changing it means commanding the modal pair.
-  if (s.activePane === 'setting' && (id === 'left' || id === 'right')) {
-    // Setting 9 on a HAAS is a stored setting that also picks the power-up
-    // default — so the choice persists and connect() re-commands it.
-    const unit = s.units === 'IN' ? 'MM' : 'IN'
-    store.set(SETTING9, unit)
-    return send(unit === 'IN' ? 'G20' : 'G21')
+  // SETTING: a list with a cursor, §2.4 p.65. The vertical keys walk it, the
+  // horizontal keys change the row underneath, and a typed number jumps.
+  if (s.activePane === 'setting') {
+    // p.66: "you can type the number of a parameter, setting, or alarm that you
+    // want to view, then press the [UP] or [DOWN] cursor arrow to view it."
+    // Checked before the plain cursor move, or typing 31 and pressing DOWN would
+    // step one row and drop the number on the floor.
+    if ((id === 'up' || id === 'down') && s.input.trim()) {
+      const want = Number(s.input.trim())
+      const at = rowOfSetting(want)
+      s.input = ''
+      if (at < 0) {
+        s.message = `setting ${want} is not on this control — see the SETTING page for what is`
+        return invalidate()
+      }
+      s.setRow = at
+      return invalidate()
+    }
+    const dr = { up: -1, down: 1, 'page-up': -PANE_ROWS, 'page-down': PANE_ROWS }[id]
+    if (dr !== undefined) {
+      s.setRow = Math.max(0, Math.min(SETTINGS.length - 1, s.setRow + dr))
+      return invalidate()
+    }
+    if (id === 'home') { s.setRow = 0; return invalidate() }
+    if (id === 'end') { s.setRow = SETTINGS.length - 1; return invalidate() }
+    const dc = { left: -1, right: 1 }[id]
+    if (dc !== undefined) return changeSetting(SETTINGS[s.setRow], dc)
   }
 
   // TOOL OFFSET: one column, so the cursor only walks rows.
@@ -215,11 +240,14 @@ function press (id) {
     // One short of PANE_ROWS: the tool pane spends a row on its heading.
     const dr = { up: -1, down: 1, 'page-up': 1 - PANE_ROWS, 'page-down': PANE_ROWS - 1 }[id]
     if (dr !== undefined) {
-      s.toolRow = Math.max(0, Math.min(TOOL_COUNT - 1, s.toolRow + dr))
+      // Setting 90: the cursor stops where the page does, or END would land on a
+      // row nothing draws and TOOL OFFSET MEASURE would write to a tool the
+      // operator cannot see.
+      s.toolRow = Math.max(0, Math.min(maxTools(s) - 1, s.toolRow + dr))
       return invalidate()
     }
     if (id === 'home') { s.toolRow = 0; return invalidate() }
-    if (id === 'end') { s.toolRow = TOOL_COUNT - 1; return invalidate() }
+    if (id === 'end') { s.toolRow = maxTools(s) - 1; return invalidate() }
     if (id === 'tool-offset-measure') return toolOffsetMeasure()
   }
 
@@ -333,6 +361,11 @@ function press (id) {
       s.alarm = id === 'estop' ? 'EMERGENCY STOP (software)' : null
       s.message = id === 'estop' ? 'this is not a hardware E-stop' : ''
       s.input = ''                 // the manual: RESET "clears input text" too
+      // Setting 31 p.341. Nothing else moves the pointer once the job is gone —
+      // it only ever advances from a status report, and there are no more of
+      // those for this cycle — so without this it freezes on the block the tool
+      // stopped in and the listing goes on pointing at a cut that is over.
+      if (settingOn(s, 31)) s.program.current = s.mdi.current = 0
       return invalidate()
 
     // The manual: CW/CCW start the spindle at the COMMANDED speed. Overwriting
@@ -345,8 +378,13 @@ function press (id) {
     case 'chip-stop': s.chipFwd = false; return send('M33')
     case 'aux-coolant': return send(s.tsc ? 'M89' : 'M88')
 
-    case 'spindle-cw': return send(`M3 S${modalS() ?? 1000}`)
-    case 'spindle-ccw': return send(`M4 S${modalS() ?? 1000}`)
+    // Setting 6 p.336 locks the spindle and ATC keys. The ATC pair is already
+    // refused for want of a changer, so this control's lock reaches two keys —
+    // and SPINDLE STOP is deliberately not one of them: a lock that could stop a
+    // student stopping the spindle would be a safety device pointing backwards.
+    case 'spindle-cw': case 'spindle-ccw':
+      if (settingOn(s, 6)) { s.message = 'FUNCTION LOCKED — setting 6 FRONT PANEL LOCK is ON'; return invalidate() }
+      return send(`${id === 'spindle-cw' ? 'M3' : 'M4'} S${modalS() ?? 1000}`)
     case 'spindle-stop': return send('M5')
 
     // Both are handled above when their page is up. Anywhere else there is no cell
@@ -372,6 +410,9 @@ function press (id) {
     // does too: it opens the one dialog that is not part of the pendant.
     case 'power-on':
       s.powered = true          // the screen lights before anything is connected
+      // A control reads its settings when it powers up, which is also the only
+      // moment this one can: `store` is defined below the state it fills in.
+      s.set = settingsFromStore(store.get(SETTINGS_KEY, null))
       $('power').showModal()
       return invalidate()
     case 'power-off':
@@ -531,6 +572,19 @@ function writeOffset (value) {
 }
 
 /**
+ * Setting 119 p.363. The lock is on the OFFSET *display*, not on the offsets —
+ * "programs that alter offsets will still be able to do so" — so it belongs on
+ * the three operator entry points and nowhere near the stream. A G10 in a
+ * running program goes out through the streamer and never comes past here.
+ */
+function offsetLocked () {
+  if (!settingOn(s, 119)) return false
+  s.message = 'FUNCTION LOCKED — setting 119 OFFSET LOCK is ON'
+  invalidate()
+  return true
+}
+
+/**
  * PART ZERO SET — the most-used setup key on a real HAAS. Stores where the
  * machine is now into the highlighted cell, so the operator jogs to the corner of
  * the part and presses one key.
@@ -540,6 +594,7 @@ function writeOffset (value) {
  * out, which on a real machine is how you find out where the table ends.
  */
 function partZeroSet () {
+  if (offsetLocked()) return
   if (s.stale) { s.message = 'no position from the machine — cannot set part zero'; return invalidate() }
   const k = displayScale(s.reportUnits, s.units)
   writeOffset(s.mpos[s.offsetCol] * k)
@@ -814,6 +869,7 @@ const toolWritten = (n, shown, persisted) => {
  * `G43.1 Z-10` put -10.000 into both `[TLO:]` and `WCO`.
  */
 function toolOffsetMeasure () {
+  if (offsetLocked()) return
   if (s.stale) { s.message = 'no position from the machine — cannot measure'; return invalidate() }
   const n = s.toolRow + 1
   s.tools = { ...s.tools, [n]: s.mpos[2] }
@@ -833,6 +889,47 @@ function toolOffsetMeasure () {
 function writeToolToMachine (n, machineZ) {
   if (!s.caps.toolTable || !link || s.job) return
   link.send(`G10 L1 P${n} Z${(machineZ * displayScale(s.reportUnits, s.units)).toFixed(4)}\n`)
+}
+
+// -------------------------------------------------- this control's own settings
+
+const SETTINGS_KEY = 'haassender.settings'
+
+/** Returns false when the browser refused to store them; the caller must say so. */
+const saveSettings = () => store.set(SETTINGS_KEY, s.set)
+
+/**
+ * Change the setting under the cursor — p.341, the horizontal keys walk a row's
+ * choices. A row with `get` is not ours to store: Setting 9 is modal g-code, so
+ * changing it means commanding the pair and letting `$G` come back and say so.
+ */
+function changeSetting (d, dir) {
+  if (d.get) {
+    // Setting 9 on a HAAS is a stored setting that also picks the power-up
+    // default — so the choice persists and applyStatus() re-commands it.
+    const unit = s.units === 'IN' ? 'MM' : 'IN'
+    store.set(SETTING9, unit)
+    return send(unit === 'IN' ? 'G20' : 'G21')
+  }
+  // The manual is explicit that the two kinds of setting take different keys, so
+  // a numeric row says which one it wants rather than nudging by one — a HAAS
+  // has no such nudge, and inventing it here would teach the wrong hand.
+  if (!d.choices) {
+    s.message = `setting ${d.n} takes a number — type ${d.min}-${d.max} and press WRITE/ENTER`
+    return invalidate()
+  }
+  s.set = { ...s.set, [d.n]: nextChoice(d, settingValue(s, d), dir) }
+  return settingWritten(d)
+}
+
+/** One report for both ways a setting changes, so both admit a refused store. */
+function settingWritten (d) {
+  const stored = saveSettings()
+  // Setting 90 can shrink the tool page out from under its own cursor.
+  if (d.n === 90) s.toolRow = Math.min(s.toolRow, maxTools(s) - 1)
+  s.message = (stored ? '' : 'NOT STORED (browser storage refused) — ') +
+    `setting ${d.n} ${d.name} is ${settingValue(s, d)}`
+  return invalidate()
 }
 
 // ------------------------------------------------------------- the run switches
@@ -1151,6 +1248,31 @@ function commitInput () {
     return offsetEntry(Number(v), 'add')
   }
 
+  // p.341: a setting with a range is changed by typing a number and pressing
+  // ENTER. Out-of-range is refused rather than clamped quietly — a student who
+  // typed 200 tools should learn this control holds twenty, not watch it become
+  // twenty behind their back.
+  if (s.activePane === 'setting') {
+    const d = SETTINGS[s.setRow]
+    s.input = ''
+    if (!v) return invalidate()
+    if (d.get || d.choices) {
+      s.message = `setting ${d.n} is changed with CURSOR ◀ ▶, not by typing`
+      return invalidate()
+    }
+    const n = Number(v)
+    if (!/^\d+$/.test(v) || !Number.isFinite(n)) {
+      s.message = `"${v}" is not a number`
+      return invalidate()
+    }
+    if (n < d.min || n > d.max) {
+      s.message = `setting ${d.n} takes ${d.min} to ${d.max} — ${n} is outside it`
+      return invalidate()
+    }
+    s.set = { ...s.set, [d.n]: clampSetting(d, n) }
+    return settingWritten(d)
+  }
+
   // The PARAMETER page is read-only, so WRITE/ENTER on it means "ask again". A
   // typed value must not fall through and be sent as g-code — the operator was
   // aiming at a settings row, and `$20=1` typed by accident changes the machine.
@@ -1208,6 +1330,7 @@ function commitInput () {
  * F1 replaces, exactly the §3.12 pair. `value` arrives in the DISPLAY unit.
  */
 function offsetEntry (value, mode) {
+  if (offsetLocked()) return
   if (s.offsetPage === 'tool') {
     const n = s.toolRow + 1
     const typedMm = value * displayScale(s.units, s.reportUnits)
@@ -1356,7 +1479,7 @@ function jogWheel (dir) {
 /** Panes with something for the handle to scroll. */
 const hasCursor = () =>
   editing() || s.activePane === 'list' || s.activePane === 'offset' ||
-  s.activePane === 'param'
+  s.activePane === 'param' || s.activePane === 'setting'
 
 function cycleStart () {
   // The machine is holding — from FEED HOLD, or from an M00/M01 the program ran
