@@ -180,6 +180,33 @@ export const SHIFTED = Object.fromEntries(
     .map(k => [k.id, k.sup])
 )
 
+/**
+ * A character typed on a real keyboard → the pendant key that types it.
+ *
+ * The MDI page is where g-code actually gets typed, and hunting for it one panel
+ * key at a time is a lesson in patience rather than in machining. Letters, digits
+ * and the yellow SHIFT legends come from the key definitions above so the two
+ * keyboards cannot drift apart; the six punctuation keys are spelled out because
+ * their legends are drawn with typographic glyphs (− and ·) no keyboard sends.
+ *
+ * `shift` means the character lives on a yellow legend: the caller arms the
+ * panel's own one-shot SHIFT latch, so `$` types the same way from either keyboard.
+ */
+const PUNCTUATION = {
+  ' ': 'space', '-': 'minus', '.': 'dot',
+  ';': 'semicolon', '(': 'paren-open', ')': 'paren-close'
+}
+
+const SHIFT_CHARS = Object.fromEntries(Object.entries(SHIFTED).map(([id, ch]) => [ch, id]))
+
+export function keyForChar (ch) {
+  if (/^[A-Za-z]$/.test(ch)) return { id: 'alpha-' + ch.toLowerCase(), shift: false }
+  if (/^[0-9]$/.test(ch)) return { id: 'num-' + ch, shift: false }
+  if (PUNCTUATION[ch]) return { id: PUNCTUATION[ch], shift: false }
+  if (SHIFT_CHARS[ch]) return { id: SHIFT_CHARS[ch], shift: true }
+  return null
+}
+
 /** Key id to the legend printed on it, for messages that need to name a key. */
 export const LEGEND = Object.fromEntries(
   Object.values(GROUPS)

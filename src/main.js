@@ -3,7 +3,7 @@ import { websocketTransport, serialTransport, simTransport, servedFromBoard } fr
 import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, parseOWord, wireProgram, WireError, homeG28, toolsUsed, stripComments, words, editBlock, TOOL_COUNT, WCS, setWorkOffset, distanceToGo, describeAlarm, describeError, describeRecovery } from './grbl.js'
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, PANE_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
-import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND } from './keys.js'
+import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND, keyForChar } from './keys.js'
 
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
@@ -1899,7 +1899,26 @@ $('file').onchange = async (e) => {
 // a cursor, and only stand in for the jog keys in SETUP:JOG with no cursor up —
 // an ArrowDown in EDIT must move the edit cursor, never the machine.
 addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return
+  if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return
+
+  // The MDI page takes typed g-code, and hunting for it one panel key at a time
+  // is the wrong lesson. A physical keyboard goes in through press() — the same
+  // path the ALPHA and NUMERIC keys take — so SHIFT, WRITE/ENTER and CANCEL keep
+  // the panel's behaviour rather than growing a second one beside it. Only on the
+  // MDI page: a letter typed on POSITION would fill an input bar nobody can see.
+  if (s.activePane === 'mdi' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'Enter' || e.key === 'Backspace') {
+      e.preventDefault()
+      return press(e.key === 'Enter' ? 'enter' : 'cancel')
+    }
+    const typed = keyForChar(e.key)
+    if (typed) {
+      e.preventDefault()
+      if (typed.shift) s.shifted = true      // the panel's own one-shot latch
+      return press(typed.id)
+    }
+  }
+
   const jogging = s.mode === 'SETUP' && s.fn === 'JOG' && !hasCursor()
   const map = jogging
     ? { ArrowLeft: 'jog-x-plus', ArrowRight: 'jog-x-minus',

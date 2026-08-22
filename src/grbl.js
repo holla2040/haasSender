@@ -686,7 +686,7 @@ export function wireProgram (lines, {
   }
 
   let expanded = 0
-  const CAP = 20000        // spliced blocks — a runaway L count stops here, loudly
+  const CAP = 200000       // spliced blocks — a runaway L count stops here, loudly
 
   // HAAS keeps a canned-cycle P sticky "unless canceled (G00, G01, G80 or
   // RESET)" — manual p.232 — while grblHAL wants a fresh P on every change to
