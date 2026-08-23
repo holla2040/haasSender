@@ -346,8 +346,9 @@ function paramBody (s) {
   if (!keys.length) {
     return html`<pre class="dim">no settings read yet
 
-Press WRITE/ENTER on an empty input bar
-here to ask the machine for $$.</pre>`
+Press PARAMETER/DIAGNOSTIC again, or
+WRITE/ENTER on an empty input bar, to ask
+the machine for $$.</pre>`
   }
   const from = paneFrom(s.paramRow, keys.length)
   return html`<pre>${keys.slice(from, from + PANE_ROWS).map((k, i) => html`<div

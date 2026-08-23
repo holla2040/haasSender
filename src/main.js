@@ -216,7 +216,23 @@ function press (id) {
   }
 
   // Display keys move the white highlight; they do not change mode.
-  if (DISPLAY_PANES[id]) { s.activePane = DISPLAY_PANES[id]; return invalidate() }
+  if (DISPLAY_PANES[id]) {
+    s.activePane = DISPLAY_PANES[id]
+    // Landing on PARAMETER asks `$$` again, and so does pressing the key while
+    // already there — that is the page's refresh. The numbers are the machine's,
+    // and a page opened after a setting changed must not show what was true at
+    // connect. Sent straight down the link, not through `send()`: a page change
+    // is not a command and has no business reporting 'not connected' or refusing
+    // itself mid-program. A running job owns the stream — an uncounted `$$` and
+    // its ~90 lines of reply would drift the streamer's buffer estimate high
+    // until it overruns for real — so the page says so rather than lying about
+    // how fresh its numbers are.
+    if (s.activePane === 'param' && link) {
+      if (s.job) s.message = 'not while a program is running — these are the settings last read'
+      else link.send('$$\n')
+    }
+    return invalidate()
+  }
 
   // SETTING: a list with a cursor, §2.4 p.65. The vertical keys walk it, the
   // horizontal keys change the row underneath, and a typed number jumps.
