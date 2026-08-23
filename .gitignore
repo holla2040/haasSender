@@ -11,3 +11,6 @@ reference/*.txt
 reference/art/
 history/tool-results/*.pdf
 history/tool-results/pdf-*/
+
+# Deploy backups of the built pendant page — regenerated on every upload.
+www-backup-*.html.gz
