@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  SETTINGS, settingValue, settingOn, maxTools, settingDefaults,
+  SETTINGS, settingValue, settingOn, maxTools, timeDerate, settingDefaults,
   settingsFromStore, clampSetting, nextChoice, rowOfSetting
 } from '../src/settings.js'
 import { TOOL_COUNT } from '../src/grbl.js'
@@ -105,6 +105,17 @@ test('a setting this control invented is numbered and labelled as its own', () =
     assert.equal(ours, /NOT A HAAS SETTING/.test(d.note),
       `setting ${d.n}: a number past 999 and the divergence note go together`)
   }
+})
+
+// The REMAIN clock is only as good as this number, and the number is only useful
+// if it survives being stored and refuses the values that would make the clock
+// nonsense — a zero here would multiply every estimate to nothing.
+test('the cycle time derate defaults to the raw estimate and stays in range', () => {
+  assert.equal(timeDerate({ set: settingDefaults() }), 100)     // ideal feed, uncorrected
+  assert.equal(timeDerate({}), 100)                             // before anything is read
+  assert.equal(timeDerate({ set: settingsFromStore({ 1001: 200 }) }), 200)
+  assert.equal(timeDerate({ set: settingsFromStore({ 1001: 9000 }) }), 400)
+  assert.equal(timeDerate({ set: settingsFromStore({ 1001: 0 }) }), 50)
 })
 
 // OFF at power-up, because the machine hides them until asked (p.129), and a

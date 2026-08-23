@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { fmt, displayScale, MM_PER_IN, clock, HELP, HELP_SECTIONS, PANE_ROWS, PROGRAM_ROWS, paneFrom, lineNumber } from '../src/ui/screen.js'
+import { fmt, displayScale, MM_PER_IN, clock, remain, HELP, HELP_SECTIONS, PANE_ROWS, PROGRAM_ROWS, paneFrom, lineNumber } from '../src/ui/screen.js'
 import { wireLine, HAAS_COLLISIONS } from '../src/grbl.js'
 
 // The staleness rule, at the only place it can silently regress. A readout that
@@ -27,6 +27,18 @@ test('an inch display of a millimetre report converts rather than reformats', ()
   // 20 mm is 0.7874", not 20.0000".
   assert.equal(fmt(20 * displayScale('MM', 'IN'), true, false), '0.7874')
   assert.equal(fmt(1 * displayScale('IN', 'MM'), false, false), '25.400')
+})
+
+// REMAIN is an estimate, and the thing an estimate must never do is dress a
+// guess it does not have as 00:00:00 — a machine that says zero minutes left is
+// making a claim about the job.
+test('REMAIN counts the estimate down, and shows nothing when there is none', () => {
+  assert.equal(remain({ cycleMs: 0 }), '—')                             // no cycle running
+  assert.equal(remain({ job: { dnc: true }, cycleMs: 0 }), '—')         // running off the card
+  assert.equal(remain({ job: { estMs: 61_000 }, cycleMs: 0 }), '00:01:01')
+  assert.equal(remain({ job: { estMs: 61_000 }, cycleMs: 60_000 }), '00:00:01')
+  // Past the estimate it holds at zero: the job is slower than Setting 1001 says.
+  assert.equal(remain({ job: { estMs: 61_000 }, cycleMs: 90_000 }), '00:00:00')
 })
 
 test('cycle time reads as a control clock, and rolls over properly', () => {

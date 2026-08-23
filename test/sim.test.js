@@ -544,6 +544,29 @@ test('the graphics plot is the program, drawn from the planner without ticking',
   assert.deepEqual(pts.at(-1), [0, 0, true])                // and the rapid out
 })
 
+test('the plot carries a cycle-time estimate: distance over rate, plus the dwells', () => {
+  // A 10 mm square at F600 is 10 mm/s... no: 600 mm/min is 10 mm/s, so each side
+  // is one second. The rapid in is 20 mm at the default 5000 mm/min, and G4 P2
+  // stops for two. Nothing here is rounded, so the arithmetic is checkable by eye.
+  const { seconds } = toolPath([
+    'G21 G90', 'G0 X10 Y10', 'G1 F600 X20', 'Y20', 'X10', 'Y10', 'G4 P2'
+  ])
+  const rapidIn = Math.hypot(10, 10) / (5000 / 60)
+  assert.ok(Math.abs(seconds - (rapidIn + 4 + 2)) < 1e-9, `got ${seconds}`)
+
+  // The rate is the one the block was given, so halving F doubles the cut.
+  const slow = toolPath(['G21 G90', 'G1 F300 X10']).seconds
+  assert.ok(Math.abs(slow - 2) < 1e-9, `got ${slow}`)
+
+  // Rapids are timed at the machine's rate, not the last F.
+  const fast = toolPath(['G21 G90', 'G1 F600 X10', 'G0 X0'], { rapidRate: 3000 }).seconds
+  assert.ok(Math.abs(fast - (1 + 10 / (3000 / 60))) < 1e-9, `got ${fast}`)
+
+  // A program that never moves has no estimate to give, and says zero rather
+  // than a number: main.js turns that into the dash the TIMERS pane shows.
+  assert.equal(toolPath(['G21 G90', 'M8']).seconds, 0)
+})
+
 test('a plot stops where the machine would have: bad block, or off the table', () => {
   const bad = toolPath(['G21 G90', 'G0 X10 Y10', 'G1 X20 F0', 'G1 X50'])
   assert.equal(bad.err, 'error:22')                          // no feedrate

@@ -5,7 +5,7 @@ import { parseStatus, parseFeedback, parseOpt, Streamer, prepare, parseONumber, 
 import { pendant } from './ui/pendant.js'
 import { screen, displayScale, HELP_ROWS, PANE_ROWS, PROGRAM_ROWS, helpTotal, helpFrom, HELP_SECTIONS } from './ui/screen.js'
 import { MODES, DISPLAY_PANES, UNAVAILABLE, SHIFTED, VERIFIED, LEGEND, keyForChar } from './keys.js'
-import { SETTINGS, settingValue, settingOn, maxTools, settingDefaults, settingsFromStore, clampSetting, nextChoice, rowOfSetting } from './settings.js'
+import { SETTINGS, settingValue, settingOn, maxTools, timeDerate, settingDefaults, settingsFromStore, clampSetting, nextChoice, rowOfSetting } from './settings.js'
 
 const $ = (id) => document.getElementById(id)
 const STATUS_IDLE_MS = 500
@@ -650,6 +650,45 @@ function modalS () {
 // -------------------------------------------------------------------- graphics
 
 /**
+ * The machine this control is talking to, as far as `$$` has said: its envelope
+ * and its rapid rate. The simulator is given both wherever it stands in for the
+ * real one — a program that leaves the table is a fault worth seeing on the page
+ * whose whole job is to find it before the tool does, and a rapid rate guessed
+ * at 5000 instead of read makes the REMAIN clock wrong on every G0.
+ */
+function simOpts () {
+  const travel = [0, 1, 2, 3].map(i => Number(s.settings[130 + i]))
+  const rapid = Number(s.settings[110])
+  return {
+    ...(travel.every(v => v > 0) ? { maxTravel: travel } : {}),
+    ...(rapid > 0 ? { rapidRate: rapid } : {})
+  }
+}
+
+/**
+ * What the TIMERS pane counts REMAIN down from, in milliseconds, or null when
+ * there is no honest number to show.
+ *
+ * One pass over the program through the simulator — the same pass the GRAPHICS
+ * page pays for a drawing, and for the same reason: it is the only reader here
+ * that knows what a block MEANS. A block it refuses stops that pass, so the
+ * estimate would cover the first half of a program and reach zero in the middle
+ * of it; null instead, and the pane shows a dash. Setting 1001 scales what is
+ * left, because the simulator has no acceleration and the machine does.
+ *
+ * ponytail: one total counted down against the wall clock, not a per-block
+ * schedule. A feed override, a hold or a tool change puts it out and it never
+ * corrects itself, and the walk starts from machine zero rather than wherever
+ * the last job left the tool, so the first rapid is measured from the wrong
+ * place. Time the blocks against the streamer's line number the day that is not
+ * good enough.
+ */
+function estimateMs (wire) {
+  const { seconds, err } = toolPath(wire, simOpts())
+  return err || seconds <= 0 ? null : seconds * 1000 * (timeDerate(s) / 100)
+}
+
+/**
  * §3.8 Graphics Mode: run the program without moving anything, and draw where the
  * tool would have gone.
  *
@@ -668,11 +707,7 @@ function modalS () {
  * grows a machine envelope to sit the shape inside.
  */
 function plotWire (wire) {
-  // The machine's own declared envelope when it has told us — a program that
-  // leaves the table is a fault worth seeing here, on the page whose whole job
-  // is to find it before the tool does.
-  const travel = [0, 1, 2, 3].map(i => Number(s.settings[130 + i]))
-  s.plot = toolPath(wire, travel.every(v => v > 0) ? { maxTravel: travel } : {})
+  s.plot = toolPath(wire, simOpts())
 
   const err = s.plot.err
   const n = err ? Number(err.slice(err.indexOf(':') + 1)) : 0
@@ -1715,7 +1750,7 @@ function cycleStart () {
   // highlight, and the DRO is what an operator actually watches.
   if (!isMdi) { s.mode = 'OPERATION'; s.fn = 'MEM'; s.activePane = 'position' }
   s.cycleStartedAt = Date.now(); s.cycleMs = 0
-  s.job = { sentAll: false, rows, prog: run, mdi: isMdi, m30: endedBy === 30 }
+  s.job = { sentAll: false, rows, prog: run, mdi: isMdi, m30: endedBy === 30, estMs: estimateMs(wire) }
   streamer.setSingleBlock(s.singleBlock)
   streamer.start(wire)
   if (s.singleBlock) streamer.release()

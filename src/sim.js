@@ -41,6 +41,13 @@ const N_SIM_TOOLS = 32     // matches N_TOOLS on the branch firmware
  * `err` is the first line the simulator refused with, or null. A rejected block
  * stops the drawing there, which is the honest picture: the machine would not
  * have gone any further either.
+ *
+ * `seconds` is the same walk with a clock held against it: every step's length
+ * over its own rate, plus the dwells. It is what this simulator's cycle would
+ * take at 100% override, which makes it a floor and not a cycle time — there is
+ * no acceleration here (see the note at the top of this file), so every corner
+ * and every arc chord is taken at full feed. Setting 1001 is where the operator
+ * corrects it against the machine they actually have.
  */
 export function toolPath (wire, opts) {
   const m = new VirtualGrbl(opts)
@@ -48,12 +55,22 @@ export function toolPath (wire, opts) {
   m.onLine(l => { if (!err && /^(error:|ALARM:)/.test(l)) err = l })
 
   const pts = [[0, 0, true]]
+  let at = zero()                // all four axes: the clock below counts what tick() counts
+  let seconds = 0
   let seen = 0                   // blocks already taken off the planner
   const harvest = () => {
     for (; seen < m.queue.length; seen++) {
       const b = m.queue[seen]
-      for (const step of b.path ?? [{ target: b.target, rapid: b.rapid }]) {
-        if (step.target) pts.push([step.target[0], step.target[1], !!step.rapid])
+      for (const step of b.path ?? [{ target: b.target, rate: b.rate, rapid: b.rapid }]) {
+        if (step.dwell !== undefined) { seconds += step.dwell; continue }
+        if (!step.target) continue
+        // Deliberately the same distance and the same rate tick() uses, so the
+        // estimate cannot disagree with the clock this simulator would run.
+        if (step.rate > 0) {
+          seconds += Math.hypot(...step.target.map((t, i) => t - at[i])) / (step.rate / 60)
+        }
+        at = step.target
+        pts.push([step.target[0], step.target[1], !!step.rapid])
       }
     }
   }
@@ -69,7 +86,7 @@ export function toolPath (wire, opts) {
     harvest()
     if (err) break
   }
-  return { pts, err, blocks: seen }
+  return { pts, err, blocks: seen, seconds }
 }
 
 export class VirtualGrbl {

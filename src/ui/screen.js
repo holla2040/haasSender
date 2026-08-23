@@ -73,6 +73,18 @@ export const clock = (ms) => {
     .map(v => String(v).padStart(2, '0')).join(':')
 }
 
+/**
+ * REMAIN: what is left of the estimate the cycle started with, counted down
+ * against the same wall clock THIS runs on.
+ *
+ * A dash whenever there is no estimate — a job running off the machine's own
+ * card, or a program the simulator would not read to the end. An estimate this
+ * control could not make is shown as no answer, never as a zero that looks like
+ * one. It stops at zero rather than counting up: the job is simply taking longer
+ * than the derate says, and a negative clock would only say it twice.
+ */
+export const remain = (s) => s.job?.estMs == null ? '—' : clock(s.job.estMs - s.cycleMs)
+
 const droRow = (label, values, s, unknown = false) => {
   const k = displayScale(s.reportUnits, s.units)
   const inches = s.units === 'IN'
@@ -822,8 +834,12 @@ const lit = (s) => html`
           s.units === 'IN', s.stale)}</span></div>`)}
       </div>`, false)}
 
+    ${/* REMAIN is this control's, not a HAAS row: the 2014 pane shows only what
+          has already happened. It is an estimate and it is allowed to say it has
+          none — a dash, never a zero pretending to be an answer. */''}
     ${pane('timers', 'TIMERS', html`
       <pre><span class="dim">THIS   </span> ${clock(s.cycleMs)}
+<span class="dim">REMAIN </span> ${remain(s)}
 <span class="dim">LAST   </span> ${clock(s.lastCycleMs)}
 <span class="dim">M30 CNT</span> ${s.parts}</pre>`, false)}
 

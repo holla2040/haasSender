@@ -57,7 +57,17 @@ export const SETTINGS = [
   // wearing a transcription's clothes. A setting is the same invention with its
   // name on it.
   { n: 1000, name: 'SHOW LINE NUMBERS', choices: ['OFF', 'ON'], def: 'OFF',
-    note: 'View-only count, never Nxx. NOT A HAAS SETTING — FNC editor menu, p.129.' }
+    note: 'View-only count, never Nxx. NOT A HAAS SETTING — FNC editor menu, p.129.' },
+
+  // The REMAIN clock is programmed feed against programmed distance, and the
+  // simulator behind it has no acceleration planner — so it is a floor, always
+  // optimistic, and worst on the short-segment work where the real machine never
+  // reaches the F it was given. Modelling accel to fix that is a lookahead engine;
+  // this is a number the operator sets once by timing a job they know. A hundred
+  // is the raw estimate, which is the honest default for a machine nobody has
+  // timed yet.
+  { n: 1001, name: 'CYCLE TIME DERATE', min: 50, max: 400, def: 100,
+    note: 'Stretches the REMAIN estimate; 100 is ideal feed. NOT A HAAS SETTING.' }
 ]
 
 const BY_N = new Map(SETTINGS.map(d => [d.n, d]))
@@ -70,6 +80,9 @@ export const settingOn = (s, n) => settingValue(s, BY_N.get(n)) === 'ON'
 
 /** How many tool rows the TOOL OFFSET page shows — Setting 90. */
 export const maxTools = (s) => Number(settingValue(s, BY_N.get(90))) || TOOL_COUNT
+
+/** Percent the REMAIN estimate is stretched by — Setting 1001. */
+export const timeDerate = (s) => Number(settingValue(s, BY_N.get(1001))) || 100
 
 /** What a control that has never stored a setting powers up with. */
 export const settingDefaults = () =>
